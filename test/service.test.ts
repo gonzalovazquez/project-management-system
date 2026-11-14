@@ -94,6 +94,21 @@ describe('AppService', () => {
     expect(svc.getAuth()).toEqual({ status: 'signed-in', host: 'github.com', login: 'gonzo', tokenSource: 'env' });
   });
 
+  it('applies the appearance setting at launch and whenever it is saved, and only then', async () => {
+    const applied: string[] = [];
+    const deps = { ...s.deps, applyAppearance: (a: string) => { applied.push(a); } };
+    await deps.settings.save({ appearance: 'dark' });
+    const svc = new AppService(deps);
+    await svc.init();
+    expect(applied).toEqual(['dark']);
+    expect((await svc.saveSettings({ appearance: 'light' })).ok).toBe(true);
+    expect((await svc.saveSettings({ onboarded: true })).ok).toBe(true); // unrelated change: not re-applied
+    expect((await svc.saveSettings({ appearance: 'system' })).ok).toBe(true);
+    expect(applied).toEqual(['dark', 'light', 'system']);
+    expect((await svc.saveSettings({ appearance: 'matrix' as never })).ok).toBe(false);
+    expect(applied).toEqual(['dark', 'light', 'system']);
+  });
+
   it('init stays signed in, marked offline, when GitHub cannot be reached at launch', async () => {
     s.clients['github.com:ghp_good'] = { whoAmI: async () => ({ login: 'gonzo' }) };
     await new AppService(s.deps).signIn('github.com', 'ghp_good');

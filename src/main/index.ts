@@ -44,6 +44,8 @@ function createService(): AppService {
     }),
     createClient: (host, token, guard) => createGitHubClient(host, token, fetch, guard),
     openExternal: (url) => shell.openExternal(url),
+    // 'system' follows macOS; 'light' / 'dark' override it for the window, its styles and its title bar.
+    applyAppearance: (a) => { nativeTheme.themeSource = a; },
     // The product mapping: local only, next to settings in the app's data folder.
     products: new ProductStore(db),
     cache: new HttpCache(db),
