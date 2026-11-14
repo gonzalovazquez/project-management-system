@@ -29,6 +29,27 @@
   }
 }
 
+/* Matrix: phosphor green on black, in monospace, on native dark mode. Restored from Project Dashboard.
+ * Chart colours re-validated against the #03100a card (docs/chart-colors.md): the old bright series failed
+ * the dark lightness band and green/amber failed deutan separation, so series and the review-point status use
+ * dimmer green / magenta / blue. */
+:root[data-theme="matrix"] {
+  --win: #000000; --side: rgba(0, 14, 5, 0.9); --bg: #010804; --card: #03100a;
+  --label: #b8ffc8; --label2: rgba(0, 255, 65, 0.66); --label3: rgba(0, 255, 65, 0.36);
+  --sep: rgba(0, 255, 65, 0.2); --fill: rgba(0, 255, 65, 0.08); --fill2: rgba(0, 255, 65, 0.15);
+  --btn: #052a12; --zebra: rgba(0, 255, 65, 0.03); --hover: rgba(0, 255, 65, 0.1); --select: rgba(0, 255, 65, 0.2);
+  --blue: #00e05a; --green: #b6ff5c; --orange: #ffb000; --red: #ff5f56; --purple: #c68cff; --teal: #2bd9c4; --gray: #6f9f7b; --indigo: #7fe0a8; --yellow: #e8e85a;
+  --series-1: #16a34a; --series-2: #c04fc0; --series-3: #3b82f6; --series-other: #6f9f7b;
+  --stage-0: #0b5d2a; --stage-1: #10893c; --stage-2: #1cc055; --stage-3: #5fe887; --stage-4: #b0ffc2; --status-serious: #c04fc0;
+  --shadow: 0 0 0 0.5px rgba(0, 255, 65, 0.22), 0 0 12px rgba(0, 255, 65, 0.06);
+  --font: var(--mono);
+  accent-color: #00e05a;
+  color-scheme: dark;
+}
+:root[data-theme="matrix"] h1, :root[data-theme="matrix"] h2, :root[data-theme="matrix"] h3 { text-shadow: 0 0 8px rgba(0, 255, 65, 0.45); }
+:root[data-theme="matrix"] .btn.primary { color: #00140a; font-weight: 600; }
+:root[data-theme="matrix"] ::selection { background: rgba(0, 255, 65, 0.35); color: #000; }
+
 * { box-sizing: border-box; }
 html, body, #root { height: 100%; }
 body { margin: 0; background: var(--win); color: var(--label); font: 13px/1.4 var(--font); -webkit-font-smoothing: antialiased; }

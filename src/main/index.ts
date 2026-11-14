@@ -2,7 +2,7 @@ import { app, BrowserWindow, dialog, ipcMain, nativeTheme, safeStorage, session,
 import { readFile, stat, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { CHANNELS } from '../shared/ipc.js';
+import { CHANNELS, THEME_BASE } from '../shared/ipc.js';
 import { registerIpc } from './app/ipc.js';
 import { TokenStore } from './app/secrets.js';
 import { AppService } from './app/service.js';
@@ -45,7 +45,7 @@ function createService(): AppService {
     createClient: (host, token, guard) => createGitHubClient(host, token, fetch, guard),
     openExternal: (url) => shell.openExternal(url),
     // 'system' follows macOS; 'light' / 'dark' override it for the window, its styles and its title bar.
-    applyAppearance: (a) => { nativeTheme.themeSource = a; },
+    applyAppearance: (a) => { nativeTheme.themeSource = THEME_BASE[a] ?? (a as 'system' | 'light' | 'dark'); },
     // The product mapping: local only, next to settings in the app's data folder.
     products: new ProductStore(db),
     cache: new HttpCache(db),

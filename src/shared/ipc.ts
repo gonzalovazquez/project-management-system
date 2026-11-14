@@ -12,8 +12,10 @@ export type RepoRole = 'artifacts' | 'crm' | 'pdr';
 export const REPO_ROLES: RepoRole[] = ['artifacts', 'crm', 'pdr'];
 export const ROLE_LABEL: Record<RepoRole, string> = { artifacts: 'Artifacts and skills', crm: 'CRM', pdr: 'PDR' };
 
-export type Appearance = 'system' | 'light' | 'dark';
-export const APPEARANCES: Appearance[] = ['system', 'light', 'dark'];
+export type Appearance = 'system' | 'light' | 'dark' | 'matrix';
+export const APPEARANCES: Appearance[] = ['system', 'light', 'dark', 'matrix'];
+/** Colour themes drawn by the page on top of a native light or dark base. */
+export const THEME_BASE: Partial<Record<Appearance, 'light' | 'dark'>> = { matrix: 'dark' };
 
 export interface RepoRef {
   owner: string;
