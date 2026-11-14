@@ -1,59 +1,63 @@
-import { app, BrowserWindow, dialog, ipcMain, nativeTheme, Notification, safeStorage, session, shell } from 'electron';
-import { stat } from 'node:fs/promises';
+import { app, BrowserWindow, ipcMain, nativeTheme, safeStorage, session } from 'electron';
+import { writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { CHANNELS } from '../shared/ipc.js';
-import { createFileCache } from './app/cache.js';
-import { createHistoryStore } from './app/history.js';
 import { registerIpc } from './app/ipc.js';
-import { createReminder } from './app/reminder.js';
-import { createWatcher, fsWatch } from './app/watcher.js';
 import { TokenStore } from './app/secrets.js';
-import { DashboardService } from './app/service.js';
+import { AppService } from './app/service.js';
 import { createSettingsStore } from './app/settings.js';
 import { isTrustedUrl } from './app/trust.js';
-import { createNotionBackend } from './notion/backend.js';
-import { scanProject, scanRoot } from './scanner/scan.js';
-import { runSmoke } from './smoke.js';
+import { apiHostname } from './github/host.js';
+import { createGitHubClient } from './github/client.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const devUrl = process.env.ELECTRON_RENDERER_URL;
-const smoke = process.env.DASHBOARD_SMOKE;
 
-// A separate data folder keeps tests and experiments away from real settings and the real token.
-if (process.env.DASHBOARD_HOME) app.setPath('userData', process.env.DASHBOARD_HOME);
+// A separate data folder keeps tests and experiments away from the real settings and token.
+if (process.env.PMWORKBENCH_HOME) app.setPath('userData', process.env.PMWORKBENCH_HOME);
 
-const isDir = (p: string) => stat(p).then((s) => s.isDirectory(), () => false);
-
-function createService(): DashboardService {
+function createService(): AppService {
   const data = app.getPath('userData');
-  return new DashboardService({
-    scanFolders: (root, onProject, now) => scanRoot(root, { now, onProject }),
-    notion: (token) => createNotionBackend(token),
-    cache: createFileCache(join(data, 'snapshot.json')),
-    history: createHistoryStore(join(data, 'stage-history.json')),
+  return new AppService({
     settings: createSettingsStore(join(data, 'settings.json')),
     tokens: new TokenStore(join(data, 'token.bin'), {
       isAvailable: () => safeStorage.isEncryptionAvailable(),
       encrypt: (s) => safeStorage.encryptString(s),
       decrypt: (b) => safeStorage.decryptString(b),
     }),
-    stageSnapshotPath: join(data, 'stage-snapshot.json'),
-    scanProject: (dir, name, now) => scanProject(dir, name, now),
-    chooseFolder: async (defaultPath) => {
-      const win = BrowserWindow.getAllWindows()[0];
-      const opts = { title: 'Choose your Development folder', defaultPath, properties: ['openDirectory' as const, 'createDirectory' as const] };
-      const r = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts);
-      return r.canceled || r.filePaths.length === 0 ? null : r.filePaths[0];
-    },
-    folderExists: isDir,
-    openExternal: async (url) => {
-      if (!url.startsWith('https://')) throw new Error('Only https links can be opened.');
-      await shell.openExternal(url);
-    },
-    showInFolder: (p) => shell.showItemInFolder(p),
-    // Matrix is drawn by the page on top of native dark mode, so the window chrome and vibrancy stay dark.
-    setAppearance: (a) => { nativeTheme.themeSource = a === 'matrix' ? 'dark' : a; },
+    createClient: (host, token) => createGitHubClient(host, token),
+  });
+}
+
+/**
+ * Blocks every network request that is not the app loading its own page, the dev server (only
+ * when ELECTRON_RENDERER_URL is set, i.e. never in a packaged build), or the currently configured
+ * GitHub API host. This is the renderer-side half of the "no network calls other than the
+ * configured GitHub host" requirement; the main-process half is the guarded fetch every GitHub
+ * request goes through (src/main/github/allowlist.ts). The renderer's content security policy
+ * (connect-src 'self') already blocks fetch/XHR/WebSocket from the page itself — this is
+ * defense in depth against anything using Electron's own networking instead.
+ */
+function installNetworkGuard(getAllowedHostname: () => string | undefined): void {
+  session.defaultSession.webRequest.onBeforeRequest((details, callback) => {
+    let u: URL;
+    try {
+      u = new URL(details.url);
+    } catch {
+      callback({ cancel: true });
+      return;
+    }
+    if (u.protocol === 'file:' || u.protocol === 'devtools:' || u.protocol === 'chrome-extension:' || u.protocol === 'data:') {
+      callback({ cancel: false });
+      return;
+    }
+    if (devUrl && (u.origin === new URL(devUrl).origin || (u.protocol === 'ws:' && u.hostname === new URL(devUrl).hostname))) {
+      callback({ cancel: false });
+      return;
+    }
+    const allowed = getAllowedHostname();
+    callback({ cancel: !(allowed && u.hostname === allowed) });
   });
 }
 
@@ -61,7 +65,6 @@ function createWindow(): BrowserWindow {
   const win = new BrowserWindow({
     width: 1280, height: 840, minWidth: 900, minHeight: 600,
     backgroundColor: nativeTheme.shouldUseDarkColors ? '#1e1e20' : '#ffffff',
-    // On a Mac the traffic lights sit over the sidebar and the sidebar picks up the native blur.
     ...(process.platform === 'darwin' ? { titleBarStyle: 'hiddenInset' as const, trafficLightPosition: { x: 16, y: 17 }, vibrancy: 'sidebar' as const, visualEffectState: 'followWindow' as const } : {}),
     webPreferences: { preload: join(here, '../preload/index.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true },
   });
@@ -82,57 +85,53 @@ function createWindow(): BrowserWindow {
 const indexFileUrl = pathToFileURL(join(here, '../renderer/index.html')).href;
 const trustedUrl = (url: string) => isTrustedUrl(url, { devUrl, indexFileUrl });
 
-/** Checks once a minute whether the weekly review is due, and shows a notification that opens it. */
-function startReminder(service: DashboardService, win: BrowserWindow) {
-  const reminder = createReminder({
-    schedule: async () => (await service.getSettings()),
-    notify: ({ title, body }) => {
-      if (!Notification.isSupported()) return;
-      const n = new Notification({ title, body });
-      n.on('click', () => {
-        const w = BrowserWindow.getAllWindows()[0] ?? win;
-        if (w.isMinimized()) w.restore();
-        w.show();
-        w.focus();
-        w.webContents.send(CHANNELS.update, { kind: 'open-review' });
-      });
-      n.show();
-    },
-  });
-  const tick = () => { void reminder.tick().catch((e) => console.error('Review reminder failed', e)); };
-  tick();
-  setInterval(tick, 60_000).unref();
-}
-
-/** Rescans when folders come and go, and refreshes a single project when its git folder changes. */
-function startWatching(service: DashboardService) {
-  const watcher = createWatcher({
-    watch: fsWatch,
-    onFolders: () => { void service.startScan(); },
-    onProject: (name) => { void service.refreshProject(name).catch((e) => console.error('Refresh failed', e)); },
-  });
-  const sync = async () => { const s = await service.getSnapshot(); watcher.sync(s.settings.developmentFolder, s.projects.map((p) => p.name)); };
-  service.onUpdate((u) => { if (u.kind === 'scan-finished') void sync(); });
-  void sync();
-  app.on('before-quit', () => watcher.close());
+/**
+ * PMWORKBENCH_SMOKE-only: once the window has loaded, inspects it for a few invariants
+ * (the preload bridge's exact shape, that Node globals didn't leak into the page, the CSP) and
+ * writes one JSON line to stdout for scripts/smoke.sh to assert on, plus a screenshot next to it.
+ */
+async function runSmokeCheck(win: BrowserWindow, auth: { status: string }, out: string): Promise<void> {
+  let result: Record<string, unknown>;
+  try {
+    const probe = await win.webContents.executeJavaScript(`({
+      bridgeKeys: Object.keys(window.pmworkbench ?? {}).sort(),
+      nodeLeaked: typeof require !== 'undefined' || typeof process !== 'undefined',
+      csp: document.querySelector('meta[http-equiv="Content-Security-Policy"]')?.content ?? null,
+    })`);
+    result = { error: null, authStatus: auth.status, ...probe };
+  } catch (e) {
+    result = { error: e instanceof Error ? e.message : String(e), authStatus: auth.status, bridgeKeys: [], nodeLeaked: null, csp: null };
+  }
+  try {
+    const png = await win.webContents.capturePage();
+    await writeFile(`${out}.png`, png.toPNG());
+  } catch { /* best-effort; the JSON result is what the checks run against */ }
+  console.log(`SMOKE_RESULT ${JSON.stringify(result)}`);
 }
 
 void app.whenReady().then(async () => {
-  // Deny everything except writing to the clipboard (Copy kickoff prompt), and only from the app's own page.
-  // Reading the clipboard stays denied.
-  session.defaultSession.setPermissionRequestHandler((_wc, perm, cb, details) =>
-    cb(perm === 'clipboard-sanitized-write' && trustedUrl(details.requestingUrl ?? '')));
+  // Deny every permission request; this app has no use for the clipboard, camera, location, etc.
+  session.defaultSession.setPermissionRequestHandler((_wc, _perm, cb) => cb(false));
   const service = createService();
+  installNetworkGuard(() => {
+    const auth = service.getAuth();
+    return auth.status === 'signed-in' ? apiHostname(auth.host) : undefined;
+  });
   await service.init();
   registerIpc(ipcMain, service, {
-    isTrusted: (e) => trustedUrl((e as { senderFrame?: { url: string } }).senderFrame?.url ?? ''),
+    isTrusted: (e) => trustedUrl(e.senderFrame?.url ?? ''),
     log: (m, err) => console.error(m, err),
   });
   const win = createWindow();
-  service.onUpdate((u) => { if (!win.isDestroyed()) win.webContents.send(CHANNELS.update, u); });
-  if (smoke) runSmoke(service, win, smoke);
-  else { startReminder(service, win); startWatching(service); }
+  const smokeOut = process.env.PMWORKBENCH_SMOKE;
+  if (smokeOut) {
+    win.webContents.once('did-finish-load', () => {
+      void runSmokeCheck(win, service.getAuth(), smokeOut).finally(() => app.quit());
+    });
+  }
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 });
 
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
+
+export { CHANNELS };

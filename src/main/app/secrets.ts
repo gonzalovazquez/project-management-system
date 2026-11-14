@@ -10,15 +10,15 @@ export interface SecretBox {
 }
 
 export class SecureStorageUnavailable extends Error {
-  constructor() { super('Secure storage is not available on this system, so the token was not saved. Set the NOTION_TOKEN environment variable instead.'); }
+  constructor() { super('Secure storage is not available on this system, so the token was not saved. Set the GITHUB_TOKEN environment variable instead.'); }
 }
 
 export type TokenSource = 'env' | 'keychain' | 'none';
 
 /**
- * Keeps the Notion token encrypted with the operating system keychain. The token is never
- * written in plain text: if encryption is unavailable, saving fails instead of falling back.
- * NOTION_TOKEN in the environment takes precedence and is never stored.
+ * Keeps the GitHub personal access token encrypted with the operating system keychain. The
+ * token is never written in plain text: if encryption is unavailable, saving fails instead of
+ * falling back. GITHUB_TOKEN in the environment takes precedence and is never stored.
  */
 export class TokenStore {
   constructor(private path: string, private box: SecretBox, private env: Record<string, string | undefined> = process.env) {}
@@ -26,7 +26,7 @@ export class TokenStore {
   get secureStorageAvailable() { return this.box.isAvailable(); }
 
   async get(): Promise<{ token?: string; source: TokenSource }> {
-    const fromEnv = this.env.NOTION_TOKEN?.trim();
+    const fromEnv = this.env.GITHUB_TOKEN?.trim();
     if (fromEnv) return { token: fromEnv, source: 'env' };
     if (!this.box.isAvailable()) return { source: 'none' };
     try {

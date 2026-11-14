@@ -1,4 +1,10 @@
-import { WIP_LIMIT, type Criterion, type Project } from './types.js';
+// Reserved for Phase 3a/3b (workflow board, flow metrics) per ADR 001 in the PM Workbench plan.
+// Inherited from Project Dashboard; not wired into the app until those phases, and the types
+// and fields it reads (Project, NotionInfo, Stage, criteria) are the old local-project model,
+// to be adapted to PM Workbench's own product/item model when it is built in Phase 2/3a.
+// The 3-project focus limit, park/kill/ship/promote rules and the weekly review they supported
+// were removed in Phase 1 — they were specific to Project Dashboard's single-person workflow.
+import { type Criterion, type Project } from './types.js';
 
 const DAY = 86_400_000;
 
@@ -25,7 +31,6 @@ export function nextStep(p: Project): string | undefined {
 
 /** Tracked, active, and not yet shipped. */
 export const isLive = (p: Project) => !!p.notion && p.notion.life === 'active' && p.notion.stage !== 'General Available';
-export const focusProjects = (ps: Project[]) => ps.filter((p) => p.notion?.focus && p.notion.life === 'active');
 
 export function stageDays(p: Project, now: Date): number {
   const at = p.notion?.stageChangedAt;
@@ -62,10 +67,6 @@ export function flags(p: Project, now: Date): Flag[] {
   return out;
 }
 
-/** Progress per unit of effort. Ranks the cheapest projects to finish first. */
-export const finishScore = (p: Project) => (progress(p) ?? 0) / (0.3 + p.complexity.score / 100);
-export const queue = (ps: Project[]) => ps.filter((p) => isLive(p) && !p.notion!.focus).sort((a, b) => finishScore(b) - finishScore(a));
-
 export function healthParts(p: Project, now: Date): Array<{ label: string; value: number; weight: number }> {
   const hygiene = Math.max(0, 100 - 35 * flags(p, now).length);
   return [
@@ -76,50 +77,3 @@ export function healthParts(p: Project, now: Date): Array<{ label: string; value
   ];
 }
 export const health = (p: Project, now: Date) => Math.round(healthParts(p, now).reduce((a, x) => a + x.value * x.weight, 0));
-
-export type PromoteResult =
-  | { ok: true; projects: Project[] }
-  | { ok: false; error: 'not-eligible' | 'full'; focus: Project[] };
-
-const patch = (ps: Project[], name: string, change: Partial<NonNullable<Project['notion']>>) =>
-  ps.map((p) => (p.name === name && p.notion ? { ...p, notion: { ...p.notion, ...change } } : p));
-
-/** Moves a project into focus. When all slots are used, the caller must say which project to park. */
-export function promote(ps: Project[], name: string, swap?: { parkName: string; reason: string; revisitOn?: string }): PromoteResult {
-  const target = ps.find((p) => p.name === name);
-  if (!target || !isLive(target)) return { ok: false, error: 'not-eligible', focus: focusProjects(ps) };
-  let next = ps;
-  const focus = focusProjects(ps);
-  if (!target.notion!.focus && focus.length >= WIP_LIMIT) {
-    if (!swap || !focus.some((p) => p.name === swap.parkName)) return { ok: false, error: 'full', focus };
-    next = park(next, swap.parkName, swap.reason, swap.revisitOn);
-  }
-  return { ok: true, projects: patch(next, name, { focus: true }) };
-}
-
-export function park(ps: Project[], name: string, reason: string, revisitOn?: string): Project[] {
-  return patch(ps, name, { life: 'parked', focus: false, parkReason: reason, revisitOn });
-}
-export const kill = (ps: Project[], name: string) => patch(ps, name, { life: 'killed', focus: false });
-
-/** Brings a parked project back. It does not take a focus slot; promote it separately. */
-export const unpark = (ps: Project[], name: string) => patch(ps, name, { life: 'active', parkReason: undefined, revisitOn: undefined });
-
-export type ShipResult =
-  | { ok: true; projects: Project[] }
-  | { ok: false; error: 'not-found' | 'not-eligible' | 'no-criteria' | 'criteria-open'; open?: number };
-
-/**
- * Moves a finished project to General Available and frees its focus slot. Only a live project with
- * ship criteria, every one of them done, can ship: a project with no criteria has no definition of done.
- */
-export function ship(ps: Project[], name: string, now: Date): ShipResult {
-  const p = ps.find((x) => x.name === name);
-  if (!p) return { ok: false, error: 'not-found' };
-  if (!isLive(p)) return { ok: false, error: 'not-eligible' };
-  const criteria = p.notion!.criteria;
-  if (criteria.length === 0) return { ok: false, error: 'no-criteria' };
-  const open = criteria.filter((c) => !c.done).length;
-  if (open > 0) return { ok: false, error: 'criteria-open', open };
-  return { ok: true, projects: patch(ps, name, { stage: 'General Available', focus: false, stageChangedAt: now.toISOString().slice(0, 10) }) };
-}
