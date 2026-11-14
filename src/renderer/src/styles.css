@@ -334,3 +334,29 @@ svg.heat rect { cursor: default; }
 .onboarding .tpl-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .scopes summary { cursor: default; font-size: 12.5px; font-weight: 500; }
 .scopes ul { margin: 6px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
+
+/* ---------- CRM, PDR and approvals (Phase 4b) ---------- */
+.writer-fields.conv { grid-template-columns: 220px 150px minmax(0, 1fr) 170px; }
+.writer-fields.conv-new, .writer-fields.pdr { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+.editor.short, .md-preview.short { min-height: 24vh; }
+.convention p { margin: 0 0 6px; }
+.convention .setrow { gap: 14px; }
+.approvals { margin-top: 10px; border-top: 0.5px solid var(--sep); padding-top: 8px; }
+.approvals h4 { margin: 0 0 6px; font: 600 11px var(--font); color: var(--label2); text-transform: uppercase; letter-spacing: 0.03em; }
+.approvals ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.approvals li { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
+.appr-hd { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.reviewer { margin-right: 10px; }
+.reviewer[data-state="approved"]::before { content: "✓ "; color: var(--green); }
+.reviewer[data-state="changes-requested"]::before { content: "✗ "; color: var(--red); }
+.reviewer[data-state="requested"]::before { content: "○ "; color: var(--label2); }
+.unresolved-n { color: var(--orange); margin-left: 4px; }
+.tag[data-status="approved"] { background: color-mix(in srgb, var(--green) 18%, transparent); color: var(--label); }
+.tag[data-status="changes-requested"] { background: color-mix(in srgb, var(--orange) 20%, transparent); color: var(--label); }
+.tag[data-status="merged"] { background: color-mix(in srgb, var(--purple) 18%, transparent); color: var(--label); }
+.tag[data-status="closed"] { background: color-mix(in srgb, var(--red) 14%, transparent); color: var(--label); }
+.approvals-empty { margin: 8px 0 0; }
+.pulls { display: flex; flex-direction: column; gap: 12px; }
+.pull-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.pull-table th { text-align: left; font-weight: 600; font-size: 11px; color: var(--label2); padding: 6px 8px; border-bottom: 0.5px solid var(--sep); }
+.pull-table td { padding: 8px; border-bottom: 0.5px solid var(--sep); vertical-align: top; }

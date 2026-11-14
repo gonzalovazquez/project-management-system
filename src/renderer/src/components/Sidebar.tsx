@@ -38,6 +38,7 @@ export function Sidebar({ settings, auth, route, products, onNavigate }: Props) 
       </nav>
       <nav className="sec" aria-label="App">
         <h6>App</h6>
+        <Item to={{ view: 'pulls' }} icon="refresh" label="Pull requests" />
         <Item to={{ view: 'settings' }} icon="gear" label="Settings" />
       </nav>
       <div className="sidefoot">

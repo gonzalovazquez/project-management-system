@@ -52,4 +52,7 @@ export function registerIpc(ipc: IpcMain, service: AppService, deps: IpcDeps): v
   handle(CHANNELS.confirmWrite, (id: unknown) => service.confirmWrite(id));
   handle(CHANNELS.editSource, (id: unknown) => service.editSource(id));
   handle(CHANNELS.openOnGitHub, (url: unknown) => service.openOnGitHub(url));
+  handle(CHANNELS.crmLayout, () => service.crmLayout());
+  handle(CHANNELS.pdrLayout, () => service.pdrLayout());
+  handle(CHANNELS.listAppPulls, () => service.listAppPulls());
 }

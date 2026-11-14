@@ -5,6 +5,7 @@ import { REPO_ROLES, ROLE_LABEL } from '../../shared/ipc.js';
 import { ProductForm } from './components/ProductForm.js';
 import { ProductHome } from './components/ProductHome.js';
 import { ProductsPage } from './components/ProductsPage.js';
+import { PullsPage } from './components/PullsPage.js';
 import { RepoBrowser } from './components/RepoBrowser.js';
 import { Settings } from './components/Settings.js';
 import { Sidebar } from './components/Sidebar.js';
@@ -65,6 +66,7 @@ export function App() {
   const meta =
     current.view === 'settings' ? { title: firstRun ? 'Connect your repos' : 'Settings', subtitle: firstRun ? 'One-time setup' : 'Repo roles and appearance' }
     : current.view === 'products' ? { title: 'Products', subtitle: 'Stored on this Mac only' }
+    : current.view === 'pulls' ? { title: 'Pull requests', subtitle: 'Opened from PM Workbench, across your three repos' }
     : current.view === 'product' ? { title: productName, subtitle: current.tab === 'board' ? 'Workflow board' : current.tab === 'metrics' ? 'Flow metrics' : 'Product home' }
     : { title: ROLE_LABEL[current.role], subtitle: settings.repoRoles[current.role]?.fullName ?? 'Not set' };
 
@@ -88,6 +90,7 @@ export function App() {
               onFinish={() => setRoute(DEFAULT_ROUTE)}
             />
           )}
+          {current.view === 'pulls' && <PullsPage host={auth.host} onOpenProduct={(id) => setRoute({ view: 'product', id })} />}
           {current.view === 'products' && (
             <ProductsPage
               products={products}
@@ -100,6 +103,7 @@ export function App() {
             <ProductHome
               key={current.id}
               id={current.id}
+              auth={auth}
               tab={current.tab ?? 'home'}
               onTab={(tab) => setRoute({ view: 'product', id: current.id, tab })}
               settings={settings}

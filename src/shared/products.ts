@@ -132,9 +132,9 @@ export interface ProductInput {
 export type ItemState =
   | { kind: 'file'; exists: true; sha: string; lastChangedAt?: string; lastChangedBy?: string; activity?: ActivityEvent[] }
   | { kind: 'file'; exists: false }
-  | { kind: 'pull'; status: PullStatus; title: string; updatedAt: string; reviewers: Reviewer[]; activity?: ActivityEvent[] }
+  | { kind: 'pull'; status: PullStatus; title: string; updatedAt: string; reviewers: Reviewer[]; activity?: ActivityEvent[]; unresolvedComments?: number }
   /** A new item waiting in an app-opened pull request. */
-  | { kind: 'pending'; prNumber: number; status: PullStatus; reviewers: Reviewer[]; updatedAt: string; activity?: ActivityEvent[] };
+  | { kind: 'pending'; prNumber: number; status: PullStatus; reviewers: Reviewer[]; updatedAt: string; activity?: ActivityEvent[]; unresolvedComments?: number };
 
 /**
  * Something that happened to an item on GitHub, for the flow metrics: a commit touching a linked

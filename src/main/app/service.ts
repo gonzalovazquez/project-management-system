@@ -1,12 +1,12 @@
 import { fail, ok, REPO_ROLES, type Appearance, type AuthState, type FileContent, type PublicSettings, type RepoList, type RepoRef, type RepoRole, type Result, type SettingsPatch, type TreeEntry } from '../../shared/ipc.js';
-import type { AddLinksResult, FileDialogResult, ImportReport, Link, Product, ProductHome, ProductSummary, PullDetail, PullSummary } from '../../shared/products.js';
+import type { AddLinksResult, FileDialogResult, ImportReport, ItemState, Link, Product, ProductHome, ProductSummary, PullDetail, PullSummary } from '../../shared/products.js';
 import { normalizeHost } from '../github/host.js';
 import type { ClientHooks, GitHubClient } from '../github/client.js';
 import type { HttpCache } from '../products/httpcache.js';
 import { syncLinks } from '../products/sync.js';
 import { WriteEngine, WriteError } from '../write/engine.js';
 import type { WriteGuardOptions } from '../write/guard.js';
-import type { EditSource, WritePreview, WriteResult } from '../../shared/writes.js';
+import type { AppPullStatus, BranchConvention, CrmLayout, EditSource, PdrLayout, WritePreview, WriteResult } from '../../shared/writes.js';
 import { MappingError, parseMapping, planImport, toMapping } from '../products/mapping.js';
 import type { NewLink, ProductStore } from '../products/store.js';
 import { isId, isPrNumber, isRole, validateLinkInput, validateLinkPatch, validateProductInput } from '../products/validate.js';
@@ -56,7 +56,18 @@ export class AppService {
 
   /** Default branch per connected repo ("owner/name" lowercase), kept current for the write guard. */
   private defaultBranches: Record<string, string> = {};
-  private guard: WriteGuardOptions = { defaultBranches: () => this.defaultBranches };
+  /** Branch conventions the PM confirmed, by repo (lowercase), kept current for the write guard. */
+  private conventions: Record<string, BranchConvention> = {};
+  private guard: WriteGuardOptions = {
+    defaultBranches: () => this.defaultBranches,
+    prefixes: () => {
+      const out: Record<string, string[]> = {};
+      for (const [repo, c] of Object.entries(this.conventions)) out[repo] = [c.prefix];
+      for (const [repo, p] of this.engine.pendingPrefixes) out[repo] = [...(out[repo] ?? []), p];
+      return out;
+    },
+    owns: (repo, branch) => this.d.products.writes().some((w) => w.repo.toLowerCase() === repo.toLowerCase() && w.branch === branch),
+  };
   private engine: WriteEngine;
 
   constructor(private d: ServiceDeps) {
@@ -70,6 +81,11 @@ export class AppService {
       roles: async () => (await this.d.settings.load()).repoRoles,
       guard: this.guard,
       now: d.now,
+      convention: async (repo) => (await this.d.settings.load()).branchConventions[repo.toLowerCase()],
+      saveConvention: async (repo, c) => {
+        const s = await this.d.settings.save({ branchConventions: { [repo.toLowerCase()]: c } });
+        this.conventions = s.branchConventions;
+      },
     });
   }
 
@@ -127,7 +143,8 @@ export class AppService {
     }
   }
 
-  private rememberBranches(roles: Partial<Record<RepoRole, RepoRef>>) {
+  private rememberBranches(roles: Partial<Record<RepoRole, RepoRef>>, conventions?: Record<string, BranchConvention>) {
+    if (conventions) this.conventions = conventions;
     this.defaultBranches = Object.fromEntries(Object.values(roles).filter((r): r is RepoRef => !!r).map((r) => [r.fullName.toLowerCase(), r.defaultBranch]));
   }
 
@@ -136,7 +153,7 @@ export class AppService {
     const settings = await this.d.settings.load();
     // Before the window exists, so it opens in the chosen appearance.
     this.d.applyAppearance?.(settings.appearance);
-    this.rememberBranches(settings.repoRoles);
+    this.rememberBranches(settings.repoRoles, settings.branchConventions);
     const { token, source } = await this.d.tokens.get();
     if (!settings.host || !token) return;
     const client = this.d.createClient(settings.host, token, this.guard, this.hooksFor(token));
@@ -223,8 +240,8 @@ export class AppService {
 
   async getSettings(): Promise<PublicSettings> {
     const s = await this.d.settings.load();
-    this.rememberBranches(s.repoRoles);
-    return { host: s.host, repoRoles: s.repoRoles, appearance: s.appearance, onboarded: s.onboarded, metrics: s.metrics, templates: s.templates, secureStorageAvailable: this.d.tokens.secureStorageAvailable };
+    this.rememberBranches(s.repoRoles, s.branchConventions);
+    return { host: s.host, repoRoles: s.repoRoles, appearance: s.appearance, onboarded: s.onboarded, metrics: s.metrics, templates: s.templates, branchConventions: s.branchConventions, secureStorageAvailable: this.d.tokens.secureStorageAvailable };
   }
 
   async saveSettings(patch: SettingsPatch): Promise<Result<PublicSettings>> {
@@ -521,4 +538,48 @@ export class AppService {
     await this.d.openExternal(u.toString());
     return ok(undefined);
   }
+
+  // -------------------------------------------------------------------------------------------
+  // Phase 4b: where CRM conversations and PDRs go, and the app's open pull requests
+  // -------------------------------------------------------------------------------------------
+
+  async crmLayout(): Promise<Result<CrmLayout>> {
+    return this.writeCall(() => this.engine.crmLayout());
+  }
+
+  async pdrLayout(): Promise<Result<PdrLayout>> {
+    return this.writeCall(() => this.engine.pdrLayout());
+  }
+
+  /**
+   * Every pull request the app opened, across the three repos, with its live review state:
+   * status, reviewers and their latest review, and unresolved review threads. Read through the
+   * same cached, conditional sync as the board.
+   */
+  async listAppPulls(): Promise<Result<AppPullStatus[]>> {
+    const c = this.requireClient();
+    if (!c.ok) return c;
+    const s = await this.d.settings.load();
+    const writes = this.d.products.writes().filter((w) => w.prNumber !== undefined);
+    const names = new Map(this.d.products.listProducts().map((p) => [p.id, p.name]));
+    // Run them through the sync as pull-request links so state, caching and back-off are shared.
+    const pseudo = writes.map((w): Link => ({
+      id: `write:${w.id}`, productId: w.productId ?? '', role: w.role, kind: 'decision', repoHost: this.host, repoFullName: w.repo,
+      prNumber: w.prNumber, title: w.title, health: { state: 'unchecked' }, createdAt: w.createdAt,
+    }));
+    const prev = this.appPullStates;
+    const cool = this.cooling();
+    const r = cool ? undefined : await syncLinks(pseudo, s.host, s.repoRoles, c.value, this.d.cache, prev, this.now());
+    for (const o of r?.outcomes ?? []) if (o.state) this.appPullStates[o.linkId] = o.state;
+    return ok(writes.map((w) => {
+      const st = this.appPullStates[`write:${w.id}`];
+      const pr = st && st.kind === 'pull' ? st : undefined;
+      return {
+        ...w, reviewers: pr?.reviewers ?? [], ...(pr ? { status: pr.status } : {}), ...(pr?.unresolvedComments !== undefined ? { unresolvedComments: pr.unresolvedComments } : {}),
+        ...(w.productId && names.has(w.productId) ? { productName: names.get(w.productId) } : {}),
+      };
+    }));
+  }
+
+  private appPullStates: Record<string, ItemState> = {};
 }

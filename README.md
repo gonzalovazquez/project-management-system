@@ -30,7 +30,10 @@ These are flow metrics: they show how work moves, not whether the objective move
 
 **Phase 4a** adds write-back: create an artifact from a template, or edit a linked one, and it
 lands as a branch plus a pull request in the artifacts repo after a preview you confirm. Nothing is
-ever committed to a default branch. See [`docs/decisions/write-back.md`](docs/decisions/write-back.md).
+ever committed to a default branch. **Phase 4b** extends that to logging CRM conversations and
+raising PDRs (following the PDR repo's branch convention, such as git-flow's `spec/…` into
+`develop`), and shows each PDR's approval status and unresolved comments, plus a page of every pull
+request the app opened. See [`docs/decisions/write-back.md`](docs/decisions/write-back.md).
 
 ## Install
 
@@ -92,7 +95,12 @@ a first product.
    **Open pull request**. A new artifact is linked straight away and shows as pending until its
    pull request merges. Editing a file the app already has an open pull request for adds a commit
    to that pull request instead of opening another.
-10. **Browse.** Each repo role in the sidebar still opens a read-only tree-and-file view.
+10. **CRM and PDRs.** **Log conversation** adds a dated section to a customer's file (or a new
+    customer), in the CRM repo's own style. **Raise PDR** starts from the PDR repo's template (or a
+    minimal structure), numbers it after the existing records, and opens the pull request on the
+    repo's branch convention, which you confirm the first time. Each PDR's review status, reviewers
+    and unresolved comments show under Decisions, on its board card, and on **Pull requests**.
+11. **Browse.** Each repo role in the sidebar still opens a read-only tree-and-file view.
 
 ## Commands
 
@@ -130,6 +138,8 @@ settings and token storage. The interface reaches it only through the bridge in
 | `previewWrite`, `confirmWrite` | Build a branch, diff and pull request without sending anything; then send exactly that preview |
 | `editSource` | The current text of a linked artifact, from the app's open pull request touching it if there is one |
 | `openOnGitHub` | Open a page on the configured GitHub host in the browser; any other URL is refused |
+| `crmLayout`, `pdrLayout` | Where the CRM repo keeps customers and conversations; where PDRs live, their numbering, template and branch convention |
+| `listAppPulls` | Every pull request the app opened, with live review state |
 
 | Piece | Where | What it does |
 |---|---|---|
@@ -171,8 +181,8 @@ App data (settings, encrypted token, `products.db`) lives in Electron's user dat
 - Stage history starts the day a product is set up (GitHub keeps none), and weeks the app wasn't
   opened stay empty in the stage chart.
 - Activity per file is capped at its last 100 commits.
-- Write-back covers artifacts only. Logging CRM conversations, raising PDRs and showing approval
-  status is Phase 4b.
+- Unresolved review comments are re-counted when a pull request changes. Resolving a thread may
+  not count as a change, so the count can lag until the next change.
 - A sync reads one tree per repo, plus a commit lookup or blob read only for files whose content
   changed, plus two reads per linked pull request. Unchanged data comes back as free 304s. See
   the decision doc for measured costs.

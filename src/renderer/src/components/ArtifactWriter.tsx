@@ -8,6 +8,7 @@ import { fillTemplate, suggestDestination, type EditSource, type WritePreview, t
 import { localDate } from '../../../shared/metrics.js';
 import { Markdown } from './Markdown.js';
 import { Sheet } from './Sheet.js';
+import { WriteDone, WriteReview } from './WriteSheets.js';
 
 type Mode = { kind: 'create'; product: Product; links: Link[] } | { kind: 'edit'; link: Link };
 
@@ -115,55 +116,11 @@ export function ArtifactWriter({ mode, settings, onClose, onDone }: Props) {
   const heading = mode.kind === 'create' ? `New artifact for ${mode.product.name}` : `Edit ${mode.link.title}`;
 
   if (step === 'done' && result) {
-    return (
-      <Sheet name="write-done" title={result.addedToExisting ? 'Commit added' : 'Pull request opened'} onClose={onClose} width={520}
-        footer={<>
-          {result.prUrl && <button className="btn" onClick={() => void window.pmworkbench.openOnGitHub(result.prUrl)}>Open on GitHub</button>}
-          <button className="btn primary" data-autofocus onClick={onClose}>Done</button>
-        </>}>
-        <p>
-          {result.addedToExisting ? `Your change was added as a new commit to pull request #${result.prNumber}.` : `Pull request #${result.prNumber} is open from ${result.branch}.`}
-          {' '}Nothing was committed to the default branch; it lands when the pull request is reviewed and merged on GitHub.
-        </p>
-        {mode.kind === 'create' && <p className="mut small">The artifact is linked to the product and shows as pending on the board until the pull request merges.</p>}
-      </Sheet>
-    );
+    return <WriteDone result={result} onClose={onClose} note={mode.kind === 'create' ? 'The artifact is linked to the product and shows as pending on the board until the pull request merges.' : undefined} />;
   }
 
   if (step === 'review' && preview) {
-    return (
-      <Sheet name="write-review" title="Review before sending" onClose={onClose} width={900}
-        footer={<>
-          {error && <span className="small" style={{ color: 'var(--red)', marginRight: 'auto' }}>{error}</span>}
-          <button className="btn" onClick={() => { setStep('edit'); setPreview(undefined); }}>Back</button>
-          <button className="btn primary" disabled={busy} onClick={() => void send()}>
-            {busy ? 'Sending…' : preview.existingPr ? `Add commit to #${preview.existingPr.number}` : 'Open pull request'}
-          </button>
-        </>}>
-        <dl className="review-meta">
-          <dt>Repo</dt><dd className="mono">{preview.repo}</dd>
-          <dt>Branch</dt><dd className="mono">{preview.branch} <span className="mut">{preview.existingPr ? `(already open as #${preview.existingPr.number})` : `(new, from ${preview.base})`}</span></dd>
-          <dt>Into</dt><dd className="mono">{preview.base}</dd>
-          <dt>Commit</dt><dd>{preview.commitMessage}</dd>
-          {!preview.existingPr && <><dt>Pull request</dt><dd><b>{preview.title}</b></dd></>}
-        </dl>
-        {preview.files.map((f) => (
-          <div key={f.path} className="diff-file">
-            <div className="diff-head"><span className="mono">{f.path}</span><span className="small"><span className="good">+{f.added}</span> <span style={{ color: 'var(--red)' }}>−{f.removed}</span> · {f.change === 'create' ? 'new file' : 'changed'}</span></div>
-            <pre className="diff mono small">{f.diff.split('\n').slice(2).map((line, i) => (
-              <span key={i} data-t={line[0] === '+' ? 'add' : line[0] === '-' ? 'del' : line[0] === '@' ? 'hunk' : 'ctx'}>{line}{'\n'}</span>
-            ))}</pre>
-          </div>
-        ))}
-        {!preview.existingPr && (
-          <details className="tview" open>
-            <summary>Pull request description</summary>
-            <pre className="mono small pr-body">{preview.body}</pre>
-          </details>
-        )}
-        <p className="mut small">Nothing is written to the default branch. This creates the branch and one commit, then opens the pull request; review and merging stay on GitHub.</p>
-      </Sheet>
-    );
+    return <WriteReview preview={preview} busy={busy} error={error} onClose={onClose} onBack={() => { setStep('edit'); setPreview(undefined); }} onSend={() => void send()} />;
   }
 
   return (

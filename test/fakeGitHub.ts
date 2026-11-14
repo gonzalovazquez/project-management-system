@@ -13,6 +13,8 @@ export interface FakePull {
   draft?: boolean;
   updatedAt?: string;
   requested?: string[];
+  /** Review threads; their resolved state is what the unresolved-comment count reads. */
+  threads?: { resolved: boolean }[];
   /** Commit dates on the PR's branch. */
   commits?: string[];
   createdAt?: string;
@@ -24,6 +26,8 @@ export interface FakeRepo {
   /** When each path last changed, and by whom; defaults to a fixed date. */
   changed?: Record<string, { at: string; by: string }>;
   pulls?: Record<number, FakePull>;
+  /** Extra branches that start out identical to main, e.g. git-flow's develop. */
+  branches?: string[];
 }
 
 export const blobSha = (content: string) => createHash('sha1').update(`blob ${Buffer.byteLength(content)}\0${content}`).digest('hex');
@@ -39,7 +43,17 @@ export function fakeGitHub(owner: string, repos: Record<string, FakeRepo>) {
   const commits = new Map<string, { files: Record<string, string>; parent?: string }>();
   const trees = new Map<string, Record<string, string>>();
   const branches = new Map<string, Map<string, string>>(); // repo -> branch -> commit sha
-  const pulls = new Map<string, { number: number; head: string; base: string; title: string; body: string; state: 'open' | 'closed'; merged: boolean }[]>();
+  type AppPr = { number: number; head: string; base: string; title: string; body: string; state: 'open' | 'closed'; merged: boolean; updatedAt: string; requested: string[]; reviews: NonNullable<FakePull['reviews']>; threads: { resolved: boolean }[] };
+  const pulls = new Map<string, AppPr[]>();
+  // Branches like develop start as copies of main.
+  for (const [name, r] of Object.entries(repos)) {
+    for (const b of r.branches ?? []) {
+      const sha = sha1(`${b}:${JSON.stringify(r.files)}`);
+      commits.set(sha, { files: { ...r.files } });
+      if (!branches.has(name)) branches.set(name, new Map());
+      branches.get(name)!.set(b, sha);
+    }
+  }
   const mainHead = (name: string) => {
     const files = { ...repos[name].files };
     const sha = sha1(`main:${JSON.stringify(files)}`);
@@ -52,13 +66,22 @@ export function fakeGitHub(owner: string, repos: Record<string, FakeRepo>) {
     const head = branches.get(name)?.get(ref) ?? (commits.has(ref) ? ref : undefined);
     return head ? commits.get(head)!.files : undefined;
   };
-  /** Merges an app pull request: its branch's files become the default branch's. */
+  /** Merges an app pull request into its base: the branch's files become the base's. */
   const merge = (name: string, number: number) => {
     const pr = pulls.get(name)?.find((p) => p.number === number);
     if (!pr) throw new Error('no such PR');
-    repos[name].files = { ...commits.get(branches.get(name)!.get(pr.head)!)!.files };
+    const files = { ...commits.get(branches.get(name)!.get(pr.head)!)!.files };
+    if (pr.base === 'main') repos[name].files = files;
+    else { const sha = sha1(`merge:${pr.number}:${JSON.stringify(files)}`); commits.set(sha, { files }); branches.get(name)!.set(pr.base, sha); }
     pr.state = 'closed';
     pr.merged = true;
+    pr.updatedAt = '2026-11-14T14:00:00Z';
+  };
+  /** Changes an app pull request's review state, as reviewers on GitHub would. */
+  const review = (name: string, number: number, change: Partial<Pick<AppPr, 'reviews' | 'threads' | 'requested'>> & { at: string }) => {
+    const pr = pulls.get(name)?.find((p) => p.number === number);
+    if (!pr) throw new Error('no such PR');
+    Object.assign(pr, change, { updatedAt: change.at });
   };
   const appPulls = (name: string) => pulls.get(name) ?? [];
 
@@ -81,6 +104,12 @@ export function fakeGitHub(owner: string, repos: Record<string, FakeRepo>) {
 
     const p = url.pathname;
     if (p === '/user') return ok({ login: 'gonzo' });
+    if (p === '/graphql' && method === 'POST') {
+      const { variables } = JSON.parse(String(init?.body ?? '{}'));
+      const pr = repos[variables.name]?.pulls?.[variables.n] ?? appPulls(variables.name).find((x) => x.number === variables.n);
+      const nodes = (pr?.threads ?? []).map((t) => ({ isResolved: t.resolved }));
+      return reply(200, { data: { repository: { pullRequest: pr ? { reviewThreads: { nodes } } : null } } });
+    }
     const m = /^\/repos\/([^/]+)\/([^/]+)\/(.*)$/.exec(p);
     if (!m || m[1] !== owner || !repos[m[2]]) return notFound();
     const repo = repos[m[2]];
@@ -125,13 +154,14 @@ export function fakeGitHub(owner: string, repos: Record<string, FakeRepo>) {
         if (state.failOpenPull) return reply(422, { message: 'Validation Failed: No commits between main and head' });
         const list = pulls.get(name) ?? [];
         const number = 100 + list.length + Object.keys(repo.pulls ?? {}).length;
-        list.push({ number, head: body.head, base: body.base, title: body.title, body: body.body, state: 'open', merged: false });
+        list.push({ number, head: body.head, base: body.base, title: body.title, body: body.body, state: 'open', merged: false, updatedAt: '2026-11-14T12:00:00Z', requested: [], reviews: [], threads: [] });
         pulls.set(name, list);
         return reply(201, { number, html_url: `https://github.com/${owner}/${name}/pull/${number}` });
       }
       return reply(404, { message: 'Not Found' });
     }
 
+    if (rest === 'branches') return ok([{ name: 'main' }, ...[...(branches.get(name)?.keys() ?? [])].map((b) => ({ name: b }))]);
     if (rest === 'pulls') {
       const head = url.searchParams.get('head')?.split(':')[1];
       return ok(appPulls(name).filter((p) => !head || p.head === head).map((p) => ({ number: p.number, html_url: `https://github.com/${owner}/${name}/pull/${p.number}`, head: { ref: p.head } })));
@@ -181,10 +211,11 @@ export function fakeGitHub(owner: string, repos: Record<string, FakeRepo>) {
       if (mine && !x[2]) {
         return ok({
           number: mine.number, title: mine.title, state: mine.state, merged: mine.merged, merged_at: mine.merged ? '2026-11-14T13:00:00Z' : null, draft: false,
-          created_at: '2026-11-14T12:00:00Z', updated_at: '2026-11-14T12:00:00Z', requested_reviewers: [], user: { login: 'gonzo' }, body: mine.body,
+          created_at: '2026-11-14T12:00:00Z', updated_at: mine.updatedAt, requested_reviewers: mine.requested.map((login) => ({ login })), user: { login: 'gonzo' }, body: mine.body,
           html_url: `https://github.com/${owner}/${name}/pull/${mine.number}`, base: { ref: mine.base }, head: { ref: mine.head },
         });
       }
+      if (mine && x[2] === '/reviews') return ok(mine.reviews.map((r, i) => ({ id: i, user: { login: r.login }, state: r.state, submitted_at: r.at })));
       if (mine) return ok([]);
       const pr = repo.pulls?.[Number(x[1])];
       if (!pr) return notFound();
@@ -199,5 +230,5 @@ export function fakeGitHub(owner: string, repos: Record<string, FakeRepo>) {
     return notFound();
   }) as typeof fetch;
 
-  return { fetch: fetchImpl, log, state, repos, merge, appPulls, branchNames: (name: string) => [...(branches.get(name)?.keys() ?? [])], filesAt };
+  return { fetch: fetchImpl, log, state, repos, merge, review, appPulls, branchNames: (name: string) => [...(branches.get(name)?.keys() ?? [])], filesAt };
 }

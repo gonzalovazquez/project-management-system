@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import type { RepoRef, RepoRole } from '../../shared/ipc.js';
 import { ARTIFACT_TYPE_LABEL, ARTIFACT_TYPES, isStage, slugify, suggestStage, type ArtifactType, type WorkflowStage } from '../../shared/products.js';
-import type { AppPull, EditSource, FileDiff, WriteDraft, WritePreview, WriteResult } from '../../shared/writes.js';
+import { appendConversation, detectCrmLayout, detectPdrLayout, suggestConvention, type AppPull, type BranchConvention, type CrmLayout, type EditSource, type FileDiff, type PdrLayout, type WriteDraft, type WritePreview, type WriteResult } from '../../shared/writes.js';
+import { markdownSections } from '../../shared/products.js';
 import type { GitHubClient } from '../github/client.js';
 import type { NewLink, ProductStore } from '../products/store.js';
 import { isId, isRepoPath } from '../products/validate.js';
@@ -43,7 +44,10 @@ interface Plan {
   files: { path: string; content: string }[];
   existing?: AppPull;
   productId?: string;
-  link?: { create: Omit<NewLink, 'pending'> } | { linkId: string };
+  /** Items to link to the product once the pull request exists (pending until it merges), or the link being edited. */
+  link?: { create: Omit<NewLink, 'pending'>[] } | { linkId: string };
+  /** A branch convention to remember for this repo once the write succeeds. */
+  saveConvention?: BranchConvention;
   expiresAt: number;
 }
 
@@ -54,6 +58,10 @@ export interface EngineDeps {
   roles: () => Promise<Partial<Record<RepoRole, RepoRef>>>;
   guard: WriteGuardOptions;
   now?: () => Date;
+  /** Stores a branch convention the PM confirmed for a repo. */
+  saveConvention?: (repoFullName: string, c: BranchConvention) => Promise<void>;
+  /** The convention the PM confirmed before for a repo, if any. */
+  convention?: (repoFullName: string) => Promise<BranchConvention | undefined>;
 }
 
 const msg = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -92,9 +100,9 @@ export class WriteEngine {
   }
 
   /** A branch name under the app prefix that doesn't exist yet in the repo. */
-  private async freshBranch(repo: RepoRef, stem: string): Promise<string> {
+  private async freshBranch(repo: RepoRef, stem: string, prefix = APP_BRANCH_PREFIX, dated = true): Promise<string> {
     const day = this.now().toISOString().slice(0, 10).replace(/-/g, '');
-    const base = `${APP_BRANCH_PREFIX}${stem}-${day}`.replace(/[^A-Za-z0-9/_.-]+/g, '-').replace(/-+/g, '-');
+    const base = `${prefix}${stem}${dated ? `-${day}` : ''}`.replace(/[^A-Za-z0-9/_.-]+/g, '-').replace(/-+/g, '-');
     const c = this.d.client();
     for (let n = 1; n <= 20; n++) {
       const name = n === 1 ? base : `${base}-${n}`;
@@ -136,7 +144,11 @@ export class WriteEngine {
     this.sweep();
     const d = draft as WriteDraft;
     if (!d || typeof d !== 'object') throw new WriteError('invalid', 'Nothing to write.');
-    const plan = d.kind === 'create-artifact' ? await this.planCreate(d) : d.kind === 'edit-artifact' ? await this.planEdit(d) : undefined;
+    const plan = d.kind === 'create-artifact' ? await this.planCreate(d)
+      : d.kind === 'edit-artifact' ? await this.planEdit(d)
+      : d.kind === 'log-conversation' ? await this.planConversation(d)
+      : d.kind === 'create-pdr' ? await this.planPdr(d)
+      : undefined;
     if (!plan) throw new WriteError('invalid', 'Unknown kind of write.');
     this.plans.set(plan.preview.id, plan);
     return plan.preview;
@@ -189,7 +201,7 @@ export class WriteEngine {
     };
     return {
       preview, repo, role: 'artifacts', parent, expect: { [d.path]: null }, files: [{ path: d.path, content }], productId: product.id,
-      link: { create: { role: 'artifacts', kind: 'artifact', repoHost: this.d.host(), repoFullName: repo.fullName, path: d.path, title, artifactType: d.artifactType, ...(stage ? { stage } : {}) } },
+      link: { create: [{ role: 'artifacts', kind: 'artifact', repoHost: this.d.host(), repoFullName: repo.fullName, path: d.path, title, artifactType: d.artifactType, ...(stage ? { stage } : {}) }] },
       expiresAt: Date.now() + PREVIEW_TTL_MS,
     };
   }
@@ -240,7 +252,7 @@ export class WriteEngine {
     const c = this.d.client();
 
     // The engine-level guard; the network guard checks the same again on the way out.
-    assertWritableBranch(repo.fullName, branch, this.d.guard);
+    assertWritableBranch(repo.fullName, branch, this.d.guard, plan.existing ? 'modify' : 'create');
     if (branch === preview.base || branch === repo.defaultBranch) throw new WriteError('protected', 'Refusing to commit to the base branch.');
 
     let createdBranch = false;
@@ -248,7 +260,7 @@ export class WriteEngine {
     await this.recoverInterrupted();
     try {
       // Stale check: the branch we build on hasn't moved in a way that touches our files.
-      const onBranch = plan.existing ? branch : repo.defaultBranch;
+      const onBranch = plan.existing ? branch : preview.base;
       const head = await c.branchHead(repo, onBranch);
       if (!head) throw new WriteError('stale', `${onBranch} no longer exists in ${repo.fullName}.`);
       if (plan.existing && head !== plan.parent) throw new WriteError('stale', `Pull request #${plan.existing.prNumber}'s branch changed on GitHub since the preview. Preview again.`);
@@ -261,6 +273,7 @@ export class WriteEngine {
 
       const commit = await c.commitFiles(repo, head, plan.files, preview.commitMessage);
       if (plan.existing) {
+        assertWritableBranch(repo.fullName, branch, this.d.guard, 'modify');
         await c.moveBranch(repo, branch, commit);
         this.d.products.touchWrite(plan.existing.id, plan.files.map((f) => f.path));
         return { prNumber: plan.existing.prNumber!, prUrl: plan.existing.prUrl ?? '', branch, addedToExisting: true, ...this.applyLink(plan, plan.existing.prNumber!) };
@@ -273,12 +286,13 @@ export class WriteEngine {
       inFlight = this.d.products.recordWrite({
         productId: plan.productId, role: plan.role, repoHost: this.d.host(), repo: repo.fullName, base: preview.base, branch,
         title: preview.title, paths: plan.files.map((f) => f.path),
-        ...(plan.link && 'create' in plan.link ? { linkPlan: { ...plan.link.create, pending: { prNumber: 0, branch } } } : {}),
+        ...(plan.link && 'create' in plan.link ? { linkPlan: plan.link.create.map((l) => ({ ...l, pending: { prNumber: 0, branch } })) } : {}),
       }).id;
       await c.createBranch(repo, branch, commit);
       createdBranch = true;
       const pr = await c.openPull(repo, { title: preview.title, body: preview.body, head: branch, base: preview.base });
       this.d.products.completeWrite(inFlight, pr.number, pr.url);
+      if (plan.saveConvention) await this.d.saveConvention?.(repo.fullName, plan.saveConvention).catch(() => undefined);
       return { prNumber: pr.number, prUrl: pr.url, branch, addedToExisting: false, ...this.applyLink(plan, pr.number) };
     } catch (e) {
       // Leave nothing half-made: a branch without its pull request is removed again.
@@ -287,6 +301,159 @@ export class WriteEngine {
       throw explain(e, repo.fullName, branch);
     }
   }
+
+  // ---------------------------------------------------------------- CRM conversations and PDRs (Phase 4b)
+
+  /** Where the CRM repo keeps customers and how it writes conversation headings, read from the repo itself. */
+  async crmLayout(): Promise<CrmLayout> {
+    const repo = await this.repoFor('crm');
+    const c = this.d.client();
+    const head = await c.branchHead(repo, repo.defaultBranch);
+    if (!head) throw new WriteError('not-found', `${repo.fullName} has no ${repo.defaultBranch} branch.`);
+    // Read the top two folder levels' Markdown files (bounded), enough to see the pattern.
+    const files: { path: string; content: string }[] = [];
+    const visit = async (path: string, depth: number) => {
+      for (const e of await c.listTree(repo, path)) {
+        if (files.length >= 60) return;
+        if (e.type === 'dir' && depth < 1) await visit(e.path, depth + 1);
+        else if (e.type === 'file' && /\.md$/i.test(e.name)) {
+          const f = await c.fileAt(repo, e.path, repo.defaultBranch);
+          if (f) files.push({ path: e.path, content: f.content });
+        }
+      }
+    };
+    await visit('', 0);
+    return detectCrmLayout(files);
+  }
+
+  /** Where PDRs live, how they're numbered, any template, and the branch convention (detected, and confirmed if it was). */
+  async pdrLayout(): Promise<PdrLayout> {
+    const repo = await this.repoFor('pdr');
+    const c = this.d.client();
+    const paths: string[] = [];
+    const visit = async (path: string, depth: number) => {
+      for (const e of await c.listTree(repo, path)) {
+        if (paths.length >= 300) return;
+        if (e.type === 'dir' && depth < 1) await visit(e.path, depth + 1);
+        else if (e.type === 'file') paths.push(e.path);
+      }
+    };
+    await visit('', 0);
+    const layout = detectPdrLayout(paths);
+    const templatePath = paths.find((p) => /template/i.test(p) && /\.md$/i.test(p));
+    const template = templatePath ? await c.fileAt(repo, templatePath, repo.defaultBranch) : null;
+    const [branches, pulls] = await Promise.all([c.listBranches(repo), c.listPulls(repo)]);
+    const pullDetails = await Promise.all(pulls.slice(0, 30).map((p) => c.getPull(repo, p.number)));
+    const detected = suggestConvention({
+      branches, defaultBranch: repo.defaultBranch, folder: layout.folder,
+      pulls: pullDetails.filter((p): p is NonNullable<typeof p> => !!p).map((p) => ({ head: p.headRef, base: p.baseRef })),
+    });
+    const confirmed = await this.d.convention?.(repo.fullName);
+    return { ...layout, ...(template && templatePath ? { template: { path: templatePath, content: template.content } } : {}), detected, ...(confirmed ? { confirmed } : {}) };
+  }
+
+  /** The app's open pull request touching `path` in `repo` if there is one, else a fresh branch off `base`. */
+  private async target(repo: RepoRef, path: string, base: string, stem: () => Promise<string>) {
+    const c = this.d.client();
+    const existing = await this.openAppPullFor(repo, path);
+    const onBranch = existing?.branch ?? base;
+    const parent = await c.branchHead(repo, onBranch);
+    if (!parent) throw new WriteError('not-found', `${repo.fullName} has no ${onBranch} branch.`);
+    const before = await c.fileAt(repo, path, onBranch);
+    const branch = existing?.branch ?? await stem();
+    return { existing, parent, before, branch, base: existing?.base ?? base };
+  }
+
+  private async planConversation(d: Extract<WriteDraft, { kind: 'log-conversation' }>): Promise<Plan> {
+    if (!isId(d.productId)) throw new WriteError('invalid', 'Pick a product.');
+    const product = this.d.products.getProduct(d.productId);
+    if (!product) throw new WriteError('not-found', 'That product no longer exists.');
+    if (!isRepoPath(d.customerPath) || !/\.md$/i.test(d.customerPath)) throw new WriteError('invalid', 'The customer file must be a Markdown path in the CRM repo.');
+    if (typeof d.date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(d.date) || Number.isNaN(Date.parse(d.date))) throw new WriteError('invalid', 'The date must be YYYY-MM-DD.');
+    const topic = typeof d.topic === 'string' ? d.topic.trim().replace(/\s+/g, ' ').slice(0, 200) : '';
+    if (!topic) throw new WriteError('invalid', 'Give the conversation a topic.');
+    const notes = typeof d.notes === 'string' ? d.notes : '';
+    if (!notes.trim()) throw new WriteError('invalid', 'Add your notes from the conversation.');
+    const participants = typeof d.participants === 'string' ? d.participants.slice(0, 500) : '';
+    if (d.stage !== undefined && d.stage !== null && !isStage(d.stage)) throw new WriteError('invalid', 'Unknown stage.');
+
+    const repo = await this.repoFor('crm');
+    const layout = await this.crmLayout();
+    const slug = slugify(d.customerPath.split('/').pop()!.replace(/\.md$/i, '')).slice(0, 40) || 'customer';
+    const t = await this.target(repo, d.customerPath, repo.defaultBranch, () => this.freshBranch(repo, `crm/${slug}`));
+    const isNew = !t.before;
+    const customerName = typeof d.customerName === 'string' ? d.customerName.trim().slice(0, 200) : '';
+    if (isNew && !customerName) throw new WriteError('invalid', `${d.customerPath} doesn't exist yet. Give the new customer a name.`);
+    const content = this.checkContent(appendConversation(t.before?.content ?? null, { customerName, date: d.date, topic, participants, notes }, layout.separator));
+    const heading = `${d.date}${layout.separator}${topic}`;
+    const anchor = markdownSections(content).filter((s) => s.heading === heading).at(-1)?.anchor;
+    if (!anchor) throw new WriteError('invalid', 'Could not place the conversation section.');
+
+    const stage: WorkflowStage | undefined = d.stage === null ? undefined : d.stage ?? 'intake';
+    const { diff, added, removed } = unifiedDiff(t.before?.content ?? null, content, d.customerPath);
+    const who = isNew ? customerName : layout.customers.find((x) => x.path === d.customerPath)?.name ?? slug;
+    const host = this.d.host();
+    const links: Omit<NewLink, 'pending'>[] = [
+      ...(isNew ? [{ role: 'crm' as const, kind: 'customer' as const, repoHost: host, repoFullName: repo.fullName, path: d.customerPath, title: customerName, ...(stage ? { stage } : {}) }] : []),
+      { role: 'crm', kind: 'conversation', repoHost: host, repoFullName: repo.fullName, path: d.customerPath, anchor, title: heading, ...(stage ? { stage } : {}) },
+    ];
+    const preview: WritePreview = {
+      id: randomUUID(), role: 'crm', repo: repo.fullName, base: t.base, branch: t.branch,
+      ...(t.existing?.prNumber ? { existingPr: { number: t.existing.prNumber, url: t.existing.prUrl ?? '' } } : {}),
+      files: [{ path: d.customerPath, change: isNew ? 'create' : 'update', diff, added, removed }],
+      commitMessage: `Log conversation with ${who}: ${d.date} ${topic}`, title: t.existing?.title ?? `Log conversation with ${who}: ${topic}`,
+      body: this.body(d.description, product.name, [d.customerPath]),
+    };
+    return {
+      preview, repo, role: 'crm', parent: t.parent, expect: { [d.customerPath]: t.before?.sha ?? null }, files: [{ path: d.customerPath, content }],
+      existing: t.existing, productId: product.id, link: { create: links }, expiresAt: Date.now() + PREVIEW_TTL_MS,
+    };
+  }
+
+  private async planPdr(d: Extract<WriteDraft, { kind: 'create-pdr' }>): Promise<Plan> {
+    if (!isId(d.productId)) throw new WriteError('invalid', 'Pick a product.');
+    const product = this.d.products.getProduct(d.productId);
+    if (!product) throw new WriteError('not-found', 'That product no longer exists.');
+    if (!isRepoPath(d.path) || !/\.(md|markdown)$/i.test(d.path)) throw new WriteError('invalid', 'The destination must be a Markdown file path in the PDR repo.');
+    const title = typeof d.title === 'string' ? d.title.trim().slice(0, 200) : '';
+    if (!title) throw new WriteError('invalid', 'Give the decision record a title.');
+    const conv = d.convention;
+    if (!conv || typeof conv.prefix !== 'string' || !/^[A-Za-z0-9._-]+\/$/.test(conv.prefix) || /^(refs|heads|main|master|develop|trunk)\/$/.test(conv.prefix)) {
+      throw new WriteError('invalid', 'Confirm a branch prefix like spec/ for the PDR repo.');
+    }
+    if (typeof conv.base !== 'string' || !/^[A-Za-z0-9._/-]+$/.test(conv.base) || conv.base.includes('..')) throw new WriteError('invalid', 'Confirm the branch PDR pull requests target.');
+    const content = this.checkContent(d.content);
+
+    const repo = await this.repoFor('pdr');
+    const c = this.d.client();
+    const parent = await c.branchHead(repo, conv.base);
+    if (!parent) throw new WriteError('not-found', `${repo.fullName} has no ${conv.base} branch to open the pull request against.`);
+    if (await c.fileAt(repo, d.path, conv.base)) throw new WriteError('invalid', `${d.path} already exists on ${conv.base} in ${repo.fullName}.`);
+    if (conv.base !== repo.defaultBranch && await c.fileAt(repo, d.path, repo.defaultBranch)) throw new WriteError('invalid', `${d.path} already exists on ${repo.defaultBranch} in ${repo.fullName}.`);
+    const clash = await this.openAppPullFor(repo, d.path);
+    if (clash) throw new WriteError('invalid', `Pull request #${clash.prNumber} from PM Workbench already adds ${d.path}.`);
+
+    // The branch follows the repo's convention, e.g. spec/spec-004-checkout-limits.
+    const stem = d.path.split('/').pop()!.replace(/\.(md|markdown)$/i, '');
+    // The guard only allows a confirmed prefix; make this one allowed for the duration of the write.
+    this.pendingPrefixes.set(repo.fullName.toLowerCase(), conv.prefix);
+    const branch = await this.freshBranch(repo, slugify(stem).slice(0, 60) || 'decision', conv.prefix, false);
+    const { diff, added, removed } = unifiedDiff(null, content, d.path);
+    const preview: WritePreview = {
+      id: randomUUID(), role: 'pdr', repo: repo.fullName, base: conv.base, branch,
+      files: [{ path: d.path, change: 'create', diff, added, removed }],
+      commitMessage: `Add decision record: ${title}`, title: `Add decision record: ${title}`,
+      body: this.body(d.description, product.name, [d.path]),
+    };
+    return {
+      preview, repo, role: 'pdr', parent, expect: { [d.path]: null }, files: [{ path: d.path, content }], productId: product.id,
+      link: { create: [{ role: 'pdr', kind: 'decision', repoHost: this.d.host(), repoFullName: repo.fullName, path: d.path, title, stage: 'specification' }] },
+      saveConvention: { prefix: conv.prefix, base: conv.base }, expiresAt: Date.now() + PREVIEW_TTL_MS,
+    };
+  }
+
+  /** A prefix the PM is confirming in a preview, allowed by the guard alongside saved ones. */
+  readonly pendingPrefixes = new Map<string, string>();
 
   /**
    * Finishes or cleans up writes interrupted between recording and confirming their pull request:
@@ -307,12 +474,13 @@ export class WriteEngine {
         if (pr) {
           this.d.products.completeWrite(w.id, pr.number, pr.url);
           if (w.linkPlan && w.productId) {
-            this.d.products.addLinks(w.productId, [{ ...w.linkPlan, pending: { prNumber: pr.number, branch: w.branch } }]);
+            const plans = Array.isArray(w.linkPlan) ? w.linkPlan : [w.linkPlan];
+            this.d.products.addLinks(w.productId, plans.map((l) => ({ ...l, pending: { prNumber: pr.number, branch: w.branch } })));
             this.d.products.snapshot(w.productId);
           }
           completed++;
         } else {
-          assertWritableBranch(repo.fullName, w.branch, this.d.guard);
+          assertWritableBranch(repo.fullName, w.branch, this.d.guard, 'modify');
           if (await c.branchHead(repo, w.branch)) await c.deleteBranch(repo, w.branch);
           this.d.products.deleteWrite(w.id);
           cleaned++;
@@ -328,9 +496,10 @@ export class WriteEngine {
   private applyLink(plan: Plan, prNumber: number): { linkId?: string } {
     if (!plan.link || !plan.productId) return {};
     if ('linkId' in plan.link) return { linkId: plan.link.linkId };
-    this.d.products.addLinks(plan.productId, [{ ...plan.link.create, pending: { prNumber, branch: plan.preview.branch } }]);
+    this.d.products.addLinks(plan.productId, plan.link.create.map((l) => ({ ...l, pending: { prNumber, branch: plan.preview.branch } })));
     this.d.products.snapshot(plan.productId);
-    return { linkId: this.d.products.lastAddedIds[0] };
+    // The last one is the item the write was for (a conversation after its new customer).
+    return { linkId: this.d.products.lastAddedIds.at(-1) };
   }
 
   private sweep() {

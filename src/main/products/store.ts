@@ -326,7 +326,7 @@ export class ProductStore {
   // ------------------------------------------------------------------ branches and PRs the app opened
 
   /** Records a write. Without a PR number it is "in flight": its branch may exist but its pull request isn't confirmed yet. */
-  recordWrite(w: Omit<AppPull, 'id' | 'createdAt' | 'updatedAt'> & { repoHost: string; linkPlan?: NewLink }): AppPull {
+  recordWrite(w: Omit<AppPull, 'id' | 'createdAt' | 'updatedAt'> & { repoHost: string; linkPlan?: NewLink | NewLink[] }): AppPull {
     const id = randomUUID();
     const at = this.now().toISOString();
     this.db.prepare(`
@@ -346,10 +346,10 @@ export class ProductStore {
   }
 
   /** Writes recorded before their pull request was confirmed, with the link each meant to add. */
-  inFlightWrites(): (AppPull & { repoHost: string; linkPlan?: NewLink })[] {
+  inFlightWrites(): (AppPull & { repoHost: string; linkPlan?: NewLink | NewLink[] })[] {
     const rows = this.db.prepare('SELECT id, repo_host, link_plan FROM writes WHERE pr_number IS NULL').all() as { id: string; repo_host: string; link_plan: string | null }[];
     const all = new Map(this.writes().map((w) => [w.id, w]));
-    return rows.map((r) => ({ ...all.get(r.id)!, repoHost: r.repo_host, ...(r.link_plan ? { linkPlan: JSON.parse(r.link_plan) as NewLink } : {}) }));
+    return rows.map((r) => ({ ...all.get(r.id)!, repoHost: r.repo_host, ...(r.link_plan ? { linkPlan: JSON.parse(r.link_plan) as NewLink | NewLink[] } : {}) }));
   }
 
   /** Adds paths to a write after another commit went onto its branch. */

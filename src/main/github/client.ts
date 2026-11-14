@@ -70,6 +70,10 @@ export interface GitHubClient {
   moveBranch(repo: RepoRef, branch: string, sha: string): Promise<void>;
   deleteBranch(repo: RepoRef, branch: string): Promise<void>;
   openPull(repo: RepoRef, p: { title: string; body: string; head: string; base: string }): Promise<{ number: number; url: string }>;
+  /** Branch names, up to 100, for detecting a repo's branch convention. */
+  listBranches(repo: RepoRef): Promise<string[]>;
+  /** Unresolved review threads on a pull request (GraphQL; GitHub's REST API doesn't expose resolution). */
+  unresolvedThreads(repo: RepoRef, number: number): Promise<number>;
   /** A pull request (any state) whose head is this branch of the same repo, if one exists. */
   pullForBranch(repo: RepoRef, branch: string): Promise<{ number: number; url: string } | null>;
 }
@@ -273,6 +277,21 @@ export function createGitHubClient(host: string, token: string, fetchImpl: typeo
     async pullForBranch(repo, branch) {
       const { data } = await octokit.request('GET /repos/{owner}/{repo}/pulls', { owner: repo.owner, repo: repo.name, head: `${repo.owner}:${branch}`, state: 'all', per_page: 1 });
       return data[0] ? { number: data[0].number, url: data[0].html_url } : null;
+    },
+
+    async listBranches(repo) {
+      const { data } = await octokit.request('GET /repos/{owner}/{repo}/branches', { owner: repo.owner, repo: repo.name, per_page: 100 });
+      return data.map((b) => b.name);
+    },
+
+    async unresolvedThreads(repo, number) {
+      const r = await octokit.graphql<{ repository: { pullRequest: { reviewThreads: { nodes: { isResolved: boolean }[] } } | null } }>(
+        `query ($owner: String!, $name: String!, $n: Int!) {
+          repository(owner: $owner, name: $name) { pullRequest(number: $n) { reviewThreads(first: 100) { nodes { isResolved } } } }
+        }`,
+        { owner: repo.owner, name: repo.name, n: number },
+      );
+      return (r.repository.pullRequest?.reviewThreads.nodes ?? []).filter((t) => !t.isResolved).length;
     },
   };
 }

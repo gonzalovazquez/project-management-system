@@ -1,5 +1,6 @@
 import { APPEARANCES, REPO_ROLES, type Appearance, type RepoRef, type RepoRole, type SettingsPatch } from '../../shared/ipc.js';
 import { readJson, writeJsonAtomic } from './jsonFile.js';
+import type { BranchConvention } from '../../shared/writes.js';
 import { DEFAULT_METRIC_SETTINGS, type MetricSettings } from '../../shared/metrics.js';
 import { ARTIFACT_TYPES, STAGES, type ArtifactType } from '../../shared/products.js';
 
@@ -11,16 +12,23 @@ export interface StoredSettings {
   metrics: MetricSettings;
   /** Where each artifact type's template lives in the artifacts repo, as the PM pointed it out. Nothing is hard-coded. */
   templates: Partial<Record<ArtifactType, string>>;
+  /** Branch conventions the PM confirmed, by repo full name (lowercase). */
+  branchConventions: Record<string, BranchConvention>;
   /** The GitHub login last signed in, so the app can open offline without asking GitHub who the token belongs to. */
   login?: string;
 }
 
-export const defaultSettings = (): StoredSettings => ({ host: '', repoRoles: {}, appearance: 'system', onboarded: false, metrics: structuredClone(DEFAULT_METRIC_SETTINGS), templates: {} });
+export const defaultSettings = (): StoredSettings => ({ host: '', repoRoles: {}, appearance: 'system', onboarded: false, metrics: structuredClone(DEFAULT_METRIC_SETTINGS), templates: {}, branchConventions: {} });
 
 const isDays = (v: unknown): v is number => Number.isInteger(v) && (v as number) >= 1 && (v as number) <= 365;
 const isTemplatePath = (v: unknown) => typeof v === 'string' && v.length > 0 && v.length <= 1024 && !v.startsWith('/') && !v.split('/').some((s) => s === '..' || s === '');
 const isTemplates = (v: unknown): v is Partial<Record<ArtifactType, string>> =>
   !!v && typeof v === 'object' && !Array.isArray(v) && Object.entries(v as object).every(([k, p]) => ARTIFACT_TYPES.includes(k as ArtifactType) && (p === null || isTemplatePath(p)));
+/** A prefix like "spec/": safe ref characters, one trailing slash, never refs/ or a protected name. */
+export const isBranchPrefix = (v: unknown) => typeof v === 'string' && /^[A-Za-z0-9._-]+\/$/.test(v) && !/^(refs|heads|main|master|develop|trunk)\/$/.test(v) && !v.includes('..');
+export const isBranchName = (v: unknown) => typeof v === 'string' && /^[A-Za-z0-9._/-]+$/.test(v) && !v.includes('..') && !v.startsWith('/') && !v.endsWith('/') && v.length <= 200;
+const isConventions = (v: unknown): v is Record<string, BranchConvention> =>
+  !!v && typeof v === 'object' && !Array.isArray(v) && Object.values(v as object).every((c) => !!c && isBranchPrefix((c as BranchConvention).prefix) && isBranchName((c as BranchConvention).base));
 const isMetricSettings = (v: unknown): v is MetricSettings => {
   const m = v as MetricSettings;
   return !!m && typeof m === 'object' && isDays(m.quietDays) && !!m.stageThresholds && STAGES.every((s) => isDays(m.stageThresholds[s]));
@@ -49,6 +57,7 @@ export function validatePatch(patch: SettingsPatch & { host?: string; login?: st
   }
   if (patch.appearance !== undefined && !APPEARANCES.includes(patch.appearance)) return 'Appearance must be system, light or dark.';
   if (patch.onboarded !== undefined && typeof patch.onboarded !== 'boolean') return 'The onboarded setting must be true or false.';
+  if (patch.branchConventions !== undefined && !isConventions(patch.branchConventions)) return 'A branch convention needs a prefix like spec/ and a base branch name.';
   if (patch.templates !== undefined && !isTemplates(patch.templates)) return 'A template must be a file path inside the artifacts repo.';
   if (patch.metrics !== undefined && !isMetricSettings(patch.metrics)) return 'Each review point must be a whole number of days from 1 to 365.';
   return undefined;
@@ -73,6 +82,7 @@ export function createSettingsStore(path: string): SettingsStore {
       appearance: stored?.appearance && APPEARANCES.includes(stored.appearance) ? stored.appearance : d.appearance,
       onboarded: typeof stored?.onboarded === 'boolean' ? stored.onboarded : d.onboarded,
       metrics: isMetricSettings(stored?.metrics) ? stored.metrics : d.metrics,
+      branchConventions: isConventions(stored?.branchConventions) ? stored.branchConventions : d.branchConventions,
       templates: isTemplates(stored?.templates) ? Object.fromEntries(Object.entries(stored.templates).filter(([, p]) => p)) : d.templates,
       ...(typeof stored?.login === 'string' && stored.login ? { login: stored.login } : {}),
     };
@@ -96,6 +106,7 @@ export function createSettingsStore(path: string): SettingsStore {
         appearance: patch.appearance ?? current.appearance,
         onboarded: patch.onboarded ?? current.onboarded,
         metrics: patch.metrics ?? current.metrics,
+        branchConventions: patch.branchConventions ? { ...current.branchConventions, ...patch.branchConventions } : current.branchConventions,
         // A null clears that type's template.
         templates: patch.templates ? Object.fromEntries(Object.entries({ ...current.templates, ...patch.templates }).filter(([, p]) => p)) : current.templates,
         ...((patch.login ?? current.login) ? { login: patch.login ?? current.login } : {}),

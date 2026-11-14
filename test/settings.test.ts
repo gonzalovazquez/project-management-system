@@ -9,7 +9,7 @@ const repo = (name: string): RepoRef => ({ owner: 'gonzalovazquez', name, fullNa
 
 describe('defaultSettings', () => {
   it('starts with no host, no roles, system appearance and not onboarded', () => {
-    expect(defaultSettings()).toEqual({ host: '', repoRoles: {}, appearance: 'system', onboarded: false, metrics: DEFAULT_METRIC_SETTINGS, templates: {} });
+    expect(defaultSettings()).toEqual({ host: '', repoRoles: {}, appearance: 'system', onboarded: false, metrics: DEFAULT_METRIC_SETTINGS, templates: {}, branchConventions: {} });
   });
 });
 
