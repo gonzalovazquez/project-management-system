@@ -57,6 +57,8 @@ export function App() {
         <div className="content" data-route={current.view}>
           {current.view === 'settings' && (
             <Settings
+              auth={auth}
+              onAuth={setAuth}
               settings={settings}
               first={firstRun}
               onSettings={setSettings}

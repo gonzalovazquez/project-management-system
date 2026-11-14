@@ -58,11 +58,33 @@ describe('createGitHubClient', () => {
 
   it('listRepos maps the REST shape to RepoRef', async () => {
     const client = createGitHubClient('github.com', 'tok', fakeGitHub());
-    const repos = await client.listRepos();
+    const { repos, missingPrivateScope } = await client.listRepos();
+    expect(missingPrivateScope).toBe(false);
     expect(repos).toEqual([
       { owner: 'gonzalovazquez', name: 'pm-artifacts', fullName: 'gonzalovazquez/pm-artifacts', defaultBranch: 'main', private: true, htmlUrl: 'https://github.com/gonzalovazquez/pm-artifacts' },
       { owner: 'gonzalovazquez', name: 'pm-crm', fullName: 'gonzalovazquez/pm-crm', defaultBranch: 'main', private: true, htmlUrl: 'https://github.com/gonzalovazquez/pm-crm' },
     ]);
+  });
+
+  it('listRepos follows every page, not just the first 100', async () => {
+    const repo = (n: number) => ({ owner: { login: 'o' }, name: `r${n}`, full_name: `o/r${n}`, default_branch: 'main', private: n % 2 === 0, html_url: `https://github.com/o/r${n}` });
+    const fetchImpl = (async (input: RequestInfo | URL) => {
+      const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url);
+      const page = Number(url.searchParams.get('page') ?? '1');
+      const body = page === 1 ? Array.from({ length: 100 }, (_, i) => repo(i)) : [repo(100), repo(101)];
+      const headers: Record<string, string> = { 'content-type': 'application/json', 'x-oauth-scopes': 'repo, read:org' };
+      if (page === 1) headers.link = '<https://api.github.com/user/repos?per_page=100&page=2>; rel="next"';
+      return new Response(JSON.stringify(body), { status: 200, headers });
+    }) as typeof fetch;
+    const { repos, missingPrivateScope } = await createGitHubClient('github.com', 'tok', fetchImpl).listRepos();
+    expect(repos).toHaveLength(102);
+    expect(repos.at(-1)?.fullName).toBe('o/r101');
+    expect(missingPrivateScope).toBe(false);
+  });
+
+  it('listRepos flags a classic token that lacks the repo scope', async () => {
+    const fetchImpl = (async () => new Response('[]', { status: 200, headers: { 'content-type': 'application/json', 'x-oauth-scopes': 'public_repo, read:user' } })) as typeof fetch;
+    expect((await createGitHubClient('github.com', 'tok', fetchImpl).listRepos()).missingPrivateScope).toBe(true);
   });
 
   it('listTree sorts folders first, then by name, and drops anything that is not a file or dir', async () => {

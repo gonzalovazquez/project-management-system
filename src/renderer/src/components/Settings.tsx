@@ -1,9 +1,13 @@
 import { useEffect, useState } from 'react';
-import { APPEARANCES, ROLE_LABEL, REPO_ROLES, type Appearance, type PublicSettings, type RepoRef, type RepoRole } from '../../../shared/ipc.js';
+import { APPEARANCES, ROLE_LABEL, REPO_ROLES, type Appearance, type AuthState, type PublicSettings, type RepoRef, type RepoRole } from '../../../shared/ipc.js';
 
 const APPEARANCE_LABEL: Record<Appearance, string> = { system: 'Match system', light: 'Light', dark: 'Dark' };
 
+type SignedIn = Extract<AuthState, { status: 'signed-in' }>;
+
 interface Props {
+  auth: SignedIn;
+  onAuth: (a: SignedIn) => void;
   settings: PublicSettings;
   first: boolean;
   onSettings: (s: PublicSettings) => void;
@@ -16,16 +20,44 @@ interface Props {
  * the appearance preference and sign-out. On first run this is what a PM sees right after signing
  * in, since nothing else in the app works until the roles are set.
  */
-export function Settings({ settings, first, onSettings, onSignedOut, onFinish }: Props) {
+export function Settings({ auth, onAuth, settings, first, onSettings, onSignedOut, onFinish }: Props) {
   const [repos, setRepos] = useState<RepoRef[]>();
+  const [missingPrivateScope, setMissingPrivateScope] = useState(false);
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState<RepoRole>();
 
-  useEffect(() => {
+  const [newToken, setNewToken] = useState('');
+  const [tokenBusy, setTokenBusy] = useState(false);
+  const [tokenMsg, setTokenMsg] = useState<{ ok: boolean; text: string }>();
+
+  const loadRepos = () => {
+    setRepos(undefined);
+    setError(undefined);
     void window.pmworkbench.listAvailableRepos().then((r) => {
-      if (r.ok) setRepos(r.value); else setError(r.message);
+      if (r.ok) { setRepos(r.value.repos); setMissingPrivateScope(r.value.missingPrivateScope); } else setError(r.message);
     });
-  }, []);
+  };
+
+  useEffect(loadRepos, []);
+
+  // Swaps the token in place: same host, repo roles untouched. A token that fails validation
+  // leaves the current one in use.
+  const changeToken = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newToken.trim() || tokenBusy) return;
+    setTokenBusy(true);
+    setTokenMsg(undefined);
+    const result = await window.pmworkbench.signIn(auth.host, newToken.trim());
+    setTokenBusy(false);
+    if (!result.ok || result.value.status !== 'signed-in') {
+      setTokenMsg({ ok: false, text: result.ok ? 'Sign-in failed.' : result.message });
+      return;
+    }
+    setNewToken('');
+    setTokenMsg({ ok: true, text: `Token updated — signed in as ${result.value.login}.` });
+    onAuth(result.value);
+    loadRepos();
+  };
 
   const assign = async (role: RepoRole, fullName: string) => {
     const repo = repos?.find((r) => r.fullName === fullName);
@@ -47,7 +79,7 @@ export function Settings({ settings, first, onSettings, onSignedOut, onFinish }:
     <div className="card">
       <div className="hd">
         <h3>{first ? 'Connect your three repos' : 'Repo roles'}</h3>
-        {!first && <button className="btn danger" onClick={() => void window.pmworkbench.signOut().then(onSignedOut)}>Sign out</button>}
+        <button className="btn danger" onClick={() => void window.pmworkbench.signOut().then(onSignedOut)}>Sign out</button>
       </div>
       <p className="mut">
         Point each role at the repo it already lives in. Nothing is moved or copied — the app just
@@ -55,6 +87,20 @@ export function Settings({ settings, first, onSettings, onSignedOut, onFinish }:
         juggling tabs.
       </p>
       {error && <p className="err small" style={{ color: 'var(--red)' }}>{error}</p>}
+      {missingPrivateScope ? (
+        <p className="banner warn small">
+          Your token is missing the <code className="mono">repo</code> scope, so GitHub hides your private
+          repos from it. Create a classic token with <code className="mono">repo</code> checked (or a
+          fine-grained one with access to these repos), then sign out and sign in again with it.
+        </p>
+      ) : (
+        <p className="mut small">
+          Don't see a private repo? Your token can't reach it: a classic token needs the{' '}
+          <code className="mono">repo</code> scope; a fine-grained token needs that repo selected (and,
+          for an organization's repo, the organization's approval). SSO-protected orgs also need the
+          token authorized for SSO.
+        </p>
+      )}
       <div className="roles">
         {REPO_ROLES.map((role) => (
           <div className="role-row" key={role}>
@@ -73,6 +119,33 @@ export function Settings({ settings, first, onSettings, onSignedOut, onFinish }:
           </div>
         ))}
       </div>
+      <form className="token-change" onSubmit={changeToken}>
+        <span className="mut small">
+          GitHub token — signed in as <b>{auth.login}</b> on {auth.host}
+          {auth.tokenSource === 'env' ? ' (from GITHUB_TOKEN)' : ''}
+        </span>
+        <div className="setrow">
+          <input
+            className="field grow"
+            type="password"
+            value={newToken}
+            onChange={(e) => setNewToken(e.target.value)}
+            placeholder="Paste a new personal access token"
+            autoComplete="off"
+            aria-label="New personal access token"
+          />
+          <button className="btn" type="submit" disabled={tokenBusy || !newToken.trim()}>
+            {tokenBusy ? 'Checking…' : 'Change token'}
+          </button>
+        </div>
+        {tokenMsg && <p className="small" style={{ margin: 0, color: tokenMsg.ok ? 'var(--green)' : 'var(--red)' }}>{tokenMsg.text}</p>}
+        {auth.tokenSource === 'env' && (
+          <p className="mut small" style={{ margin: 0 }}>
+            The <code className="mono">GITHUB_TOKEN</code> environment variable wins at launch, so a token changed here
+            lasts only until you quit unless you unset or update that variable.
+          </p>
+        )}
+      </form>
       <div className="setrow">
         <span className="mut small">Appearance</span>
         <select value={settings.appearance} onChange={(e) => void setAppearance(e.target.value as Appearance)}>

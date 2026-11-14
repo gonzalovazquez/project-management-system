@@ -21,6 +21,12 @@ export interface RepoRef {
   htmlUrl: string;
 }
 
+export interface RepoList {
+  repos: RepoRef[];
+  /** The token is a classic PAT without the `repo` scope, so private repos are hidden from it. */
+  missingPrivateScope: boolean;
+}
+
 export type AuthState =
   | { status: 'signed-out' }
   | { status: 'signed-in'; host: string; login: string; tokenSource: 'env' | 'keychain' };
@@ -63,7 +69,7 @@ export interface PMWorkbenchApi {
   getAuth(): Promise<AuthState>;
   signIn(host: string, token: string): Promise<Result<AuthState>>;
   signOut(): Promise<void>;
-  listAvailableRepos(): Promise<Result<RepoRef[]>>;
+  listAvailableRepos(): Promise<Result<RepoList>>;
   getSettings(): Promise<PublicSettings>;
   saveSettings(patch: SettingsPatch): Promise<Result<PublicSettings>>;
   browseTree(role: RepoRole, path: string): Promise<Result<TreeEntry[]>>;
