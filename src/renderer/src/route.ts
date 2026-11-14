@@ -1,8 +1,10 @@
+import type { RepoRole } from '../../shared/ipc.js';
+
 export type Route =
-  | { view: 'overview' }
-  | { view: 'project'; name: string }
-  | { view: 'review' | 'planning' | 'library' | 'inbox' | 'parked' | 'shipped' | 'settings' };
+  | { view: 'browse'; role: RepoRole }
+  | { view: 'settings' };
 
-export const OVERVIEW: Route = { view: 'overview' };
+export const DEFAULT_ROUTE: Route = { view: 'browse', role: 'artifacts' };
 
-export const sameRoute = (a: Route, b: Route) => a.view === b.view && (a.view !== 'project' || (b.view === 'project' && a.name === b.name));
+export const sameRoute = (a: Route, b: Route): boolean =>
+  a.view === b.view && (a.view !== 'browse' || (b.view === 'browse' && a.role === b.role));

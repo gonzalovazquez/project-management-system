@@ -1,157 +1,82 @@
-import type { Project, StagePoint } from './types.js';
-import type { IdeaRow } from './planning.js';
-import type { ReviewOutcome, ReviewPlan } from './review.js';
+/**
+ * The whole contract between the renderer and the main process. The renderer never reaches the
+ * network, the file system, or GitHub directly — every one of these calls crosses the preload
+ * bridge (src/preload/index.ts) to a handler registered in src/main/app/ipc.ts. Nothing else is
+ * exposed on window.pmworkbench.
+ */
 
-/** Matrix is a dark theme of its own: the window runs in native dark mode and the page swaps in green-on-black tokens. */
-export type Appearance = 'system' | 'light' | 'dark' | 'matrix';
-export const APPEARANCES: Appearance[] = ['system', 'light', 'dark', 'matrix'];
+export type RepoRole = 'artifacts' | 'crm' | 'pdr';
+export const REPO_ROLES: RepoRole[] = ['artifacts', 'crm', 'pdr'];
+export const ROLE_LABEL: Record<RepoRole, string> = { artifacts: 'Artifacts and skills', crm: 'CRM', pdr: 'PDR' };
 
-export type NotionState = 'not-configured' | 'connected' | 'error' | 'schema-missing';
+export type Appearance = 'system' | 'light' | 'dark';
+export const APPEARANCES: Appearance[] = ['system', 'light', 'dark'];
 
-export interface NotionStatus {
-  state: NotionState;
-  message?: string;
-  syncedAt?: string;
-  pages?: number;
+export interface RepoRef {
+  owner: string;
+  name: string;
+  fullName: string;
+  defaultBranch: string;
+  private: boolean;
+  htmlUrl: string;
 }
 
-/** Settings as the interface sees them. The token itself never crosses the bridge. */
+export type AuthState =
+  | { status: 'signed-out' }
+  | { status: 'signed-in'; host: string; login: string; tokenSource: 'env' | 'keychain' };
+
 export interface PublicSettings {
-  developmentFolder: string;
-  overrides: Record<string, string>;
-  /** Folders hidden from the Inbox. */
-  ignored: string[];
-  /** Folders folded into another project: primary folder name to member folder names. */
-  groups: Record<string, string[]>;
-  tokenSource: 'env' | 'keychain' | 'none';
-  secureStorageAvailable: boolean;
+  host: string;
+  repoRoles: Partial<Record<RepoRole, RepoRef>>;
   appearance: Appearance;
-  /** 0 (Sunday) to 6 (Saturday). */
-  reviewDay: number;
-  /** Local time, HH:MM. */
-  reviewTime: string;
-  reviewReminder: boolean;
-  /** The first-run setup was finished or skipped. */
   onboarded: boolean;
-  lastReviewAt?: string;
+  secureStorageAvailable: boolean;
 }
 
-/**
- * A Notion page that no folder is paired with: an idea still being planned, shown on the Planning screen, and offered
- * when linking a folder by hand.
- */
-export interface UnlinkedPage extends IdeaRow { url: string }
-
-export interface Snapshot {
-  projects: Project[];
-  scannedAt?: string;
-  scanning: boolean;
-  scanError?: string;
-  notion: NotionStatus;
-  settings: PublicSettings;
-  /** Daily record of projects per stage, oldest first. Starts when the app first sees Notion. */
-  stageHistory: StagePoint[];
-  /** Pages in the database that no folder matched, so an unmatched folder can be linked to one. */
-  unlinkedPages: UnlinkedPage[];
+export interface SettingsPatch {
+  repoRoles?: Partial<Record<RepoRole, RepoRef | null>>;
+  appearance?: Appearance;
+  onboarded?: boolean;
 }
 
-export type ErrorCode =
-  | 'invalid' | 'not-found' | 'not-eligible' | 'full'
-  | 'no-notion' | 'schema-missing' | 'notion-write-failed' | 'no-criteria' | 'criteria-open'
-  | 'no-secure-storage' | 'scan-failed' | 'busy' | 'internal';
-
-export interface ActionError {
-  code: ErrorCode;
-  message: string;
-  /** For `full`: the names of the projects currently in focus, so the caller can offer a swap. */
-  focus?: string[];
+export interface TreeEntry {
+  path: string;
+  name: string;
+  type: 'file' | 'dir';
+  sha: string;
 }
 
-export type Result<T = void> = { ok: true; value: T } | { ok: false; error: ActionError };
+export interface FileContent {
+  path: string;
+  content: string;
+  truncated: boolean;
+  htmlUrl: string;
+}
 
-export type ProjectUpdate =
-  | { kind: 'scan-started' }
-  | { kind: 'project'; project: Project }
-  | { kind: 'scan-finished'; snapshot: Snapshot }
-  | { kind: 'notion'; notion: NotionStatus }
-  /** Settings or the list of unlinked pages changed, for example after a save or a link. */
-  | { kind: 'meta'; settings: PublicSettings; unlinkedPages: UnlinkedPage[] }
-  /** The review reminder was clicked. */
-  | { kind: 'open-review' };
+export type ErrorCode = 'invalid' | 'not-signed-in' | 'no-role' | 'network' | 'blocked-host';
+export type Result<T> = { ok: true; value: T } | { ok: false; error: ErrorCode; message: string };
 
-export type LinkKind = 'github' | 'notion' | 'folder';
+export const ok = <T>(value: T): Result<T> => ({ ok: true, value });
+export const fail = (error: ErrorCode, message: string): Result<never> => ({ ok: false, error, message });
 
-export interface SwapChoice { parkName: string; reason: string; revisitOn?: string }
-export interface SettingsPatch { developmentFolder?: string; overrides?: Record<string, string>; ignored?: string[]; groups?: Record<string, string[]>; appearance?: Appearance; reviewDay?: number; reviewTime?: string; reviewReminder?: boolean; onboarded?: boolean }
-
-/**
- * Everything the interface may call. Mutating calls run the pure rules in
- * src/shared/rules.ts first and write nothing when a rule rejects the change.
- */
-export interface DashboardApi {
-  getSnapshot(): Promise<Snapshot>;
-  startScan(): Promise<void>;
-  onProjectUpdate(listener: (update: ProjectUpdate) => void): () => void;
-  /** Adds an unchecked ship criterion to the end of the project's Notion page. */
-  addCriterion(name: string, text: string): Promise<Result>;
-  setCriterion(name: string, blockId: string, checked: boolean): Promise<Result>;
-  promote(name: string, swap?: SwapChoice): Promise<Result>;
-  park(name: string, reason: string, revisitOn?: string): Promise<Result>;
-  kill(name: string): Promise<Result>;
-  unpark(name: string): Promise<Result>;
-  /** Moves a project whose criteria are all done to General Available and frees its focus slot. */
-  markShipped(name: string): Promise<Result>;
-  /** Creates a Notion page titled with the folder name, in Not started, and pairs the folder with it. */
-  addToNotion(name: string): Promise<Result>;
-  /** Folds an untracked folder into a project, so they are tracked as one. Rescans. */
-  groupFolder(name: string, into: string): Promise<Result>;
-  /** Splits a folder back out of the project it was folded into. Rescans. */
-  ungroupFolder(name: string): Promise<Result>;
-  /** Hides a folder from the Inbox, or brings it back. */
-  ignoreFolder(name: string, ignored: boolean): Promise<Result>;
-  /** Pairs a folder with an existing Notion page that no folder matched. */
-  linkFolder(name: string, pageId: string): Promise<Result>;
-  /** Applies a whole weekly review in one step, or none of it. Then leaves a dated note on each reviewed page. */
-  applyReview(plan: ReviewPlan): Promise<Result<ReviewOutcome>>;
-  /** Opens the system folder picker. Resolves to the chosen path, or null when cancelled. */
-  chooseFolder(): Promise<Result<string | null>>;
+export interface PMWorkbenchApi {
+  getAuth(): Promise<AuthState>;
+  signIn(host: string, token: string): Promise<Result<AuthState>>;
+  signOut(): Promise<void>;
+  listAvailableRepos(): Promise<Result<RepoRef[]>>;
   getSettings(): Promise<PublicSettings>;
-  saveSettings(patch: SettingsPatch): Promise<Result>;
-  setToken(token: string | null): Promise<Result>;
-  /** Opens a project's GitHub page, Notion page or folder. The interface names the project; the main process looks up the URL. */
-  openLink(name: string, kind: LinkKind): Promise<Result>;
-  /** Opens an idea's Notion page. The id is one of the unlinked pages. */
-  openIdea(pageId: string): Promise<Result>;
-  /** Opens a new Claude chat that runs the brainstorm-plan skill on the idea. The new page shows up on the next scan. */
-  startNewProject(idea: string): Promise<Result>;
+  saveSettings(patch: SettingsPatch): Promise<Result<PublicSettings>>;
+  browseTree(role: RepoRole, path: string): Promise<Result<TreeEntry[]>>;
+  readFile(role: RepoRole, path: string): Promise<Result<FileContent>>;
 }
 
 export const CHANNELS = {
-  getSnapshot: 'dashboard:getSnapshot',
-  startScan: 'dashboard:startScan',
-  addCriterion: 'dashboard:addCriterion',
-  setCriterion: 'dashboard:setCriterion',
-  promote: 'dashboard:promote',
-  park: 'dashboard:park',
-  kill: 'dashboard:kill',
-  unpark: 'dashboard:unpark',
-  markShipped: 'dashboard:markShipped',
-  addToNotion: 'dashboard:addToNotion',
-  groupFolder: 'dashboard:groupFolder',
-  ungroupFolder: 'dashboard:ungroupFolder',
-  ignoreFolder: 'dashboard:ignoreFolder',
-  linkFolder: 'dashboard:linkFolder',
-  applyReview: 'dashboard:applyReview',
-  chooseFolder: 'dashboard:chooseFolder',
-  getSettings: 'dashboard:getSettings',
-  saveSettings: 'dashboard:saveSettings',
-  setToken: 'dashboard:setToken',
-  openLink: 'dashboard:openLink',
-  openIdea: 'dashboard:openIdea',
-  startNewProject: 'dashboard:startNewProject',
-  /** Main to renderer events. */
-  update: 'dashboard:update',
+  getAuth: 'pmw:get-auth',
+  signIn: 'pmw:sign-in',
+  signOut: 'pmw:sign-out',
+  listAvailableRepos: 'pmw:list-available-repos',
+  getSettings: 'pmw:get-settings',
+  saveSettings: 'pmw:save-settings',
+  browseTree: 'pmw:browse-tree',
+  readFile: 'pmw:read-file',
 } as const;
-
-export const ok = <T = void>(value?: T): Result<T> => ({ ok: true, value: value as T });
-export const fail = (code: ErrorCode, message: string, extra: Partial<ActionError> = {}): Result<never> => ({ ok: false, error: { code, message, ...extra } });

@@ -1,22 +1,18 @@
 {
-  "name": "project-dashboard",
-  "version": "1.1.0",
+  "name": "pm-workbench",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Desktop dashboard for finishing local projects",
+  "description": "Desktop hub that connects a product manager's artifacts, CRM and PDR GitHub repos around the product they're managing",
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "scan": "tsx src/main/cli.ts",
-    "notion:setup": "tsx src/main/notion/cli.ts setup",
-    "notion:pull": "tsx src/main/notion/cli.ts pull",
     "predev": "node scripts/ensure-electron.mjs",
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "prestart": "node scripts/ensure-electron.mjs",
     "start": "electron-vite preview",
     "smoke": "bash scripts/smoke.sh",
-    "ui-check": "npm run build --silent && for v in full sparse untracked empty scanning scanning-empty firstrun broken crash; do tsx scripts/make-sample.ts $v; done && node scripts/ui-check.mjs",
     "package": "npm run build && electron-builder --mac",
     "package:dir": "npm run build && electron-builder --dir",
     "icon": "node scripts/make-icon.mjs"
@@ -38,13 +34,13 @@
     "vitest": "^5.0.5"
   },
   "dependencies": {
-    "@notionhq/client": "^5.27.1"
+    "@octokit/rest": "^22.0.0"
   },
   "main": "./out/main/index.js",
   "author": "Gonzalo Vazquez",
   "build": {
-    "appId": "com.gonzalovazquez.project-dashboard",
-    "productName": "Project Dashboard",
+    "appId": "com.gonzalovazquez.pm-workbench",
+    "productName": "PM Workbench",
     "directories": {
       "output": "release",
       "buildResources": "build"

@@ -1,3 +1,7 @@
+// Reserved for Phase 3b (flow metrics) per ADR 001 in the PM Workbench plan — the daily
+// stage snapshot this module keeps is what the "items by stage over time" chart draws from.
+// Not wired into the app until then; stageCounts reads the Project Dashboard local-project
+// model (Project.notion.life/stage), which Phase 3a/3b replace with PM Workbench's own model.
 import { type Project, type Stage, type StagePoint } from '../../shared/types.js';
 import { readJson, writeJsonAtomic } from './jsonFile.js';
 

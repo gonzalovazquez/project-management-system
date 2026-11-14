@@ -1,4 +1,8 @@
-export const WIP_LIMIT = 3;
+// Reserved for Phase 3a/3b (workflow board, flow metrics) per ADR 001 in the PM Workbench plan.
+// This is Project Dashboard's local-project model, inherited as-is; Phase 2 defines PM Workbench's
+// own product/item model, and Phase 3a/3b adapt Stage, ScanResult and the pulse/health shapes below
+// to it. Not imported by the app until then. WIP_LIMIT (the 3-project focus limit) was removed in
+// Phase 1 along with the focus/park/kill/ship rules it gated.
 export const WEEKS = 12;
 
 export type Stage = 'Not started' | 'In progress' | 'Beta' | 'General Available';

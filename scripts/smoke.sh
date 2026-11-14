@@ -1,39 +1,29 @@
 #!/usr/bin/env bash
 # Set SMOKE_BIN to the packaged executable to test that instead of running from source.
-# Launches the built app against a throwaway data folder and a small fixture Development folder,
-# then checks that the window rendered the scanned projects. Linux only (uses xvfb).
+# Launches the built app against a throwaway data folder with no GitHub token configured and
+# checks that it starts cleanly: a window opens, the strict CSP and preload bridge are in place,
+# and nothing crashes. This replaces the old scanning-era smoke test (Phase 1 dropped the local
+# folder scanner, so there is no longer a Development folder or scan result to assert on); it is
+# a narrower check than before, intentionally, until Phase 2+ gives it a product to exercise.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 npm run build --silent
 work="$(mktemp -d)"
-dev="$work/Development"
-for name in alpha beta; do
-  mkdir -p "$dev/$name"
-  git -C "$dev/$name" init -q -b main
-  echo "export const x = 1" > "$dev/$name/index.ts"
-  git -C "$dev/$name" add -A
-  git -C "$dev/$name" -c user.name=t -c user.email=t@t commit -q -m init
-done
 mkdir -p "$work/data"
-echo "{\"developmentFolder\":\"$dev\",\"overrides\":{},\"onboarded\":true}" > "$work/data/settings.json"
 out="${SMOKE_OUT:-$work/smoke}"
-env -u NOTION_TOKEN DASHBOARD_HOME="$work/data" DASHBOARD_SMOKE="$out" \
+env -u GITHUB_TOKEN PMWORKBENCH_HOME="$work/data" PMWORKBENCH_SMOKE="$out" \
   xvfb-run -a ${SMOKE_BIN:-npx electron .} --no-sandbox --disable-gpu 2>&1 | grep SMOKE_RESULT | tee "$work/result.txt"
 echo "screenshot: $out.png"
 node -e '
 const r = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8").replace(/^SMOKE_RESULT /, ""));
-const expectKeys = ["addCriterion","addToNotion","applyReview","chooseFolder","getSettings","getSnapshot","groupFolder","ignoreFolder","kill","linkFolder","markShipped","onProjectUpdate","openIdea","openLink","park","promote","saveSettings","setCriterion","setToken","startNewProject","startScan","ungroupFolder","unpark"];
+const expectKeys = ["browseTree","getAuth","getSettings","listAvailableRepos","readFile","saveSettings","signIn","signOut"];
 const checks = {
   "no launch error": !r.error,
-  "sidebar counts both fixture folders": r.allProjects === "2" && r.inbox === "2",
-  "headline asks to connect Notion": typeof r.headline === "string" && r.headline.includes("Connect Notion"),
-  "banner explains how to connect": typeof r.banner === "string" && r.banner.includes("Notion is not connected"),
-  "portfolio says nothing is tracked": r.noTracked === true,
-  "sidebar says Notion is not connected": typeof r.notionState === "string" && r.notionState.includes("not connected"),
+  "signed out with no token configured": r.authStatus === "signed-out",
   "bridge exposes exactly the intended methods": JSON.stringify(r.bridgeKeys) === JSON.stringify(expectKeys),
   "Node is not reachable from the page": r.nodeLeaked === false,
   "strict script policy": typeof r.csp === "string" && r.csp.includes("script-src '"'"'self'"'"';") && !/script-src[^;]*unsafe/.test(r.csp),
-  "scan finished without error": r.scanError === null,
+  "renderer has no connect-src escape hatch": typeof r.csp === "string" && r.csp.includes("connect-src '"'"'self'"'"';"),
 };
 let bad = 0;
 for (const [k, v] of Object.entries(checks)) { console.log((v ? "PASS " : "FAIL ") + k); if (!v) bad++; }

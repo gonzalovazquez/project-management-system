@@ -1,121 +1,95 @@
-import { useState } from 'react';
-import type { Appearance, NotionState, Snapshot } from '../../../shared/ipc.js';
-import { NoticeBar, useAction } from './actions.js';
-import { ScheduleCard } from './Review.js';
+import { useEffect, useState } from 'react';
+import { APPEARANCES, ROLE_LABEL, REPO_ROLES, type Appearance, type PublicSettings, type RepoRef, type RepoRole } from '../../../shared/ipc.js';
 
-const NOTION_TEXT: Record<NotionState, string> = {
-  connected: 'Connected',
-  'not-configured': 'Not connected',
-  error: 'Could not reach Notion',
-  'schema-missing': 'Connected, but the database needs setup',
-};
-const APPEARANCES: Array<[Appearance, string]> = [['system', 'Match system'], ['light', 'Light'], ['dark', 'Dark'], ['matrix', 'Matrix']];
+const APPEARANCE_LABEL: Record<Appearance, string> = { system: 'Match system', light: 'Light', dark: 'Dark' };
 
-interface Props { snap: Snapshot; first: boolean; onFinish: () => void }
+interface Props {
+  settings: PublicSettings;
+  first: boolean;
+  onSettings: (s: PublicSettings) => void;
+  onSignedOut: () => void;
+  onFinish: () => void;
+}
 
-export function Settings({ snap, first, onFinish }: Props) {
-  const s = snap.settings;
-  const folder = useAction();
-  const token = useAction();
-  const look = useAction();
-  const group = useAction();
-  const [secret, setSecret] = useState('');
-  const api = window.dashboard;
-  const env = s.tokenSource === 'env';
+/**
+ * Assigns the three repo roles (artifacts+skills, CRM, PDR) a real GitHub repo each, and holds
+ * the appearance preference and sign-out. On first run this is what a PM sees right after signing
+ * in, since nothing else in the app works until the roles are set.
+ */
+export function Settings({ settings, first, onSettings, onSignedOut, onFinish }: Props) {
+  const [repos, setRepos] = useState<RepoRef[]>();
+  const [error, setError] = useState<string>();
+  const [busy, setBusy] = useState<RepoRole>();
 
-  const choose = async () => {
-    const picked = await api.chooseFolder();
-    if (!picked.ok) { folder.fail(picked.error.message); return; }
-    if (picked.value === null) return;
-    if (await folder.run(() => api.saveSettings({ developmentFolder: picked.value! }), `Scanning ${picked.value}…`)) void api.startScan();
+  useEffect(() => {
+    void window.pmworkbench.listAvailableRepos().then((r) => {
+      if (r.ok) setRepos(r.value); else setError(r.message);
+    });
+  }, []);
+
+  const assign = async (role: RepoRole, fullName: string) => {
+    const repo = repos?.find((r) => r.fullName === fullName);
+    setBusy(role);
+    const result = await window.pmworkbench.saveSettings({ repoRoles: { [role]: repo ?? null } });
+    setBusy(undefined);
+    if (!result.ok) { setError(result.message); return; }
+    onSettings(result.value);
   };
-  const connect = async () => {
-    const value = secret.trim();
-    if (!value) return;
-    if (await token.run(() => api.setToken(value))) { setSecret(''); void api.startScan(); }
+
+  const setAppearance = async (appearance: Appearance) => {
+    const result = await window.pmworkbench.saveSettings({ appearance });
+    if (result.ok) onSettings(result.value);
   };
-  const disconnect = async () => { if (await token.run(() => api.setToken(null), 'Notion disconnected.')) void api.startScan(); };
+
+  const ready = REPO_ROLES.every((r) => settings.repoRoles[r]);
 
   return (
-    <>
-      {first && (
-        <div className="hello" data-view="welcome">
-          <div className="eye">Welcome</div>
-          <h1>Finish what you start</h1>
-          <p className="mut">Two steps: tell the app where your projects live, then connect Notion so it knows what each one needs to ship. You can change both later in Settings.</p>
-        </div>
-      )}
-
-      <section className="card" aria-labelledby="set-folder" data-section="folder">
-        <h3 id="set-folder">{first ? '1. ' : ''}Development folder</h3>
-        <p className="mut small">Every folder directly inside it becomes a project.</p>
-        <NoticeBar notice={folder.notice} />
-        <div className="setrow"><code className="mono" data-testid="folder-path">{s.developmentFolder}</code><button className="btn" onClick={() => void choose()} disabled={snap.scanning} data-action="choose-folder">Choose…</button></div>
-        {snap.scanError && <p className="banner bad" role="alert" data-banner="scan">{snap.scanError}</p>}
-      </section>
-
-      {Object.keys(s.groups).length > 0 && (
-        <section className="card" aria-labelledby="set-groups" data-section="groups">
-          <h3 id="set-groups">Grouped folders</h3>
-          <p className="mut small">These folders are tracked together with another project as one.</p>
-          <NoticeBar notice={group.notice} />
-          <ul className="plan">
-            {Object.entries(s.groups).flatMap(([primary, members]) => members.map((m) => (
-              <li key={`${primary}/${m}`} data-group-member={m}>
-                <span className="mono">{m}</span> is part of <b>{primary}</b>{' '}
-                <button className="link" disabled={snap.scanning || group.busy} onClick={() => void group.run(() => api.ungroupFolder(m), `${m} is its own project again.`)} data-action="ungroup">Split out</button>
-              </li>
-            )))}
-          </ul>
-        </section>
-      )}
-
-      <section className="card" aria-labelledby="set-notion" data-section="notion">
-        <h3 id="set-notion">{first ? '2. ' : ''}Notion</h3>
-        <p data-testid="notion-line"><b>{NOTION_TEXT[snap.notion.state]}</b>{snap.notion.pages !== undefined && snap.notion.state !== 'not-configured' ? `, ${snap.notion.pages} pages in the database` : ''}</p>
-        {snap.notion.message && snap.notion.state !== 'not-configured' && <p className="mut small">{snap.notion.message}</p>}
-        {snap.notion.state === 'schema-missing' && (
-          <p className="small" data-testid="schema-help">Run <code className="mono">npm run notion:setup</code> in the project folder to see the missing properties. That is only a preview. To add them, run <code className="mono">npm run notion:setup -- --apply</code>, then rescan.</p>
-        )}
-        <NoticeBar notice={token.notice} />
-        {env ? (
-          <p className="mut small" data-testid="token-env">The token comes from the NOTION_TOKEN environment variable. Remove the variable to manage it here.</p>
-        ) : !s.secureStorageAvailable ? (
-          <p className="banner warn" data-testid="no-secure-storage">This computer cannot encrypt secrets for the app, so it will not save a token. Set the NOTION_TOKEN environment variable instead.</p>
-        ) : (
-          <form className="setrow" onSubmit={(e) => { e.preventDefault(); void connect(); }}>
-            <input className="field grow" type="password" autoComplete="off" spellCheck={false} placeholder={s.tokenSource === 'keychain' ? 'Paste a new token to replace the saved one' : 'Paste your integration token'} aria-label="Notion integration token" value={secret} onChange={(e) => setSecret(e.target.value)} data-field="token" />
-            <button className="btn primary" type="submit" disabled={!secret.trim() || token.busy} data-action="connect">{s.tokenSource === 'keychain' ? 'Replace' : 'Connect'}</button>
-            {s.tokenSource === 'keychain' && <button type="button" className="btn danger" onClick={() => void disconnect()} disabled={token.busy} data-action="disconnect">Disconnect</button>}
-          </form>
-        )}
-        <details className="tview"><summary>How to get a token</summary>
-          <ol className="small">
-            <li>In Notion, open Settings, then Connections, then Develop or manage integrations, and create an internal integration.</li>
-            <li>Copy its secret and paste it above. It is stored in your system keychain and never leaves this computer except to reach Notion.</li>
-            <li>Open your Brainstorming database, choose Connections from the ••• menu, and add the integration.</li>
-          </ol>
-        </details>
-      </section>
-
-      {!first && (
-        <section className="card" aria-labelledby="set-look" data-section="appearance">
-          <h3 id="set-look">Appearance</h3>
-          <NoticeBar notice={look.notice} />
-          <div className="seg" role="group" aria-label="Appearance">
-            {APPEARANCES.map(([v, l]) => <button key={v} aria-pressed={s.appearance === v} onClick={() => void look.run(() => api.saveSettings({ appearance: v }))} data-appearance={v}>{l}</button>)}
+    <div className="card">
+      <div className="hd">
+        <h3>{first ? 'Connect your three repos' : 'Repo roles'}</h3>
+        {!first && <button className="btn danger" onClick={() => void window.pmworkbench.signOut().then(onSignedOut)}>Sign out</button>}
+      </div>
+      <p className="mut">
+        Point each role at the repo it already lives in. Nothing is moved or copied — the app just
+        remembers which repo is which, so you can browse all three around one product instead of
+        juggling tabs.
+      </p>
+      {error && <p className="err small" style={{ color: 'var(--red)' }}>{error}</p>}
+      <div className="roles">
+        {REPO_ROLES.map((role) => (
+          <div className="role-row" key={role}>
+            <div className="label">
+              <b>{ROLE_LABEL[role]}</b>
+              <span>{settings.repoRoles[role]?.fullName ?? 'Not set'}</span>
+            </div>
+            <select
+              value={settings.repoRoles[role]?.fullName ?? ''}
+              disabled={!repos || busy === role}
+              onChange={(e) => void assign(role, e.target.value)}
+            >
+              <option value="">{repos ? 'Choose a repo…' : 'Loading your repos…'}</option>
+              {repos?.map((r) => <option key={r.fullName} value={r.fullName}>{r.fullName}</option>)}
+            </select>
           </div>
-        </section>
+        ))}
+      </div>
+      <div className="setrow">
+        <span className="mut small">Appearance</span>
+        <select value={settings.appearance} onChange={(e) => void setAppearance(e.target.value as Appearance)}>
+          {APPEARANCES.map((a) => <option key={a} value={a}>{APPEARANCE_LABEL[a]}</option>)}
+        </select>
+      </div>
+      {!settings.secureStorageAvailable && (
+        <p className="banner warn small">
+          Your system keychain isn't available, so the token can't be saved — set the{' '}
+          <code className="mono">GITHUB_TOKEN</code> environment variable instead if you want to skip signing in every launch.
+        </p>
       )}
-
-      {!first && <ScheduleCard snap={snap} />}
-
       {first && (
-        <div className="rv-nav">
-          <button className="btn" onClick={onFinish} data-action="skip-setup">Skip for now</button>
-          <button className="btn primary" onClick={onFinish} data-action="finish-setup">{snap.notion.state === 'connected' ? 'Finish' : 'Continue without Notion'}</button>
+        <div className="sheet-foot">
+          <button className="btn primary" disabled={!ready} onClick={onFinish}>Done</button>
         </div>
       )}
-    </>
+    </div>
   );
 }

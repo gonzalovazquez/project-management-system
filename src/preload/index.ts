@@ -1,38 +1,20 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import { CHANNELS, type DashboardApi, type ProjectUpdate } from '../shared/ipc.js';
+import { CHANNELS, type PMWorkbenchApi } from '../shared/ipc.js';
 
 /**
- * The only thing the interface can reach. Each method forwards to one fixed channel;
- * ipcRenderer itself is never exposed.
+ * The only thing the renderer can reach. Each method forwards to one fixed channel; ipcRenderer
+ * itself is never exposed, and there is no network access here — every GitHub call happens in
+ * the main process, behind the allow-list in src/main/index.ts.
  */
-const api: DashboardApi = {
-  getSnapshot: () => ipcRenderer.invoke(CHANNELS.getSnapshot),
-  startScan: () => ipcRenderer.invoke(CHANNELS.startScan),
-  onProjectUpdate(listener) {
-    const wrapped = (_e: unknown, update: ProjectUpdate) => listener(update);
-    ipcRenderer.on(CHANNELS.update, wrapped);
-    return () => { ipcRenderer.removeListener(CHANNELS.update, wrapped); };
-  },
-  addCriterion: (name, text) => ipcRenderer.invoke(CHANNELS.addCriterion, name, text),
-  setCriterion: (name, blockId, checked) => ipcRenderer.invoke(CHANNELS.setCriterion, name, blockId, checked),
-  promote: (name, swap) => ipcRenderer.invoke(CHANNELS.promote, name, swap),
-  park: (name, reason, revisitOn) => ipcRenderer.invoke(CHANNELS.park, name, reason, revisitOn),
-  kill: (name) => ipcRenderer.invoke(CHANNELS.kill, name),
-  unpark: (name) => ipcRenderer.invoke(CHANNELS.unpark, name),
-  markShipped: (name) => ipcRenderer.invoke(CHANNELS.markShipped, name),
-  addToNotion: (name) => ipcRenderer.invoke(CHANNELS.addToNotion, name),
-  groupFolder: (name, into) => ipcRenderer.invoke(CHANNELS.groupFolder, name, into),
-  ungroupFolder: (name) => ipcRenderer.invoke(CHANNELS.ungroupFolder, name),
-  ignoreFolder: (name, ignored) => ipcRenderer.invoke(CHANNELS.ignoreFolder, name, ignored),
-  linkFolder: (name, pageId) => ipcRenderer.invoke(CHANNELS.linkFolder, name, pageId),
-  applyReview: (plan) => ipcRenderer.invoke(CHANNELS.applyReview, plan),
-  chooseFolder: () => ipcRenderer.invoke(CHANNELS.chooseFolder),
+const api: PMWorkbenchApi = {
+  getAuth: () => ipcRenderer.invoke(CHANNELS.getAuth),
+  signIn: (host, token) => ipcRenderer.invoke(CHANNELS.signIn, host, token),
+  signOut: () => ipcRenderer.invoke(CHANNELS.signOut),
+  listAvailableRepos: () => ipcRenderer.invoke(CHANNELS.listAvailableRepos),
   getSettings: () => ipcRenderer.invoke(CHANNELS.getSettings),
   saveSettings: (patch) => ipcRenderer.invoke(CHANNELS.saveSettings, patch),
-  setToken: (token) => ipcRenderer.invoke(CHANNELS.setToken, token),
-  openLink: (name, kind) => ipcRenderer.invoke(CHANNELS.openLink, name, kind),
-  openIdea: (pageId) => ipcRenderer.invoke(CHANNELS.openIdea, pageId),
-  startNewProject: (idea) => ipcRenderer.invoke(CHANNELS.startNewProject, idea),
+  browseTree: (role, path) => ipcRenderer.invoke(CHANNELS.browseTree, role, path),
+  readFile: (role, path) => ipcRenderer.invoke(CHANNELS.readFile, role, path),
 };
 
-contextBridge.exposeInMainWorld('dashboard', api);
+contextBridge.exposeInMainWorld('pmworkbench', api);

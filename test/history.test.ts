@@ -1,10 +1,13 @@
+// Reserved for Phase 3b per ADR 001: history.ts and this test cover the pure stage-history
+// functions only. The old "recording history from scans" suite drove the deleted
+// DashboardService (Notion + local scanning) through a fake harness; that integration doesn't
+// exist in PM Workbench, and is Phase 3b's to rebuild against the new product model.
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { StagePoint } from '../src/shared/types.js';
 import { createHistoryStore, localDate, stageCounts, upsertPoint } from '../src/main/app/history.js';
-import { board, harness } from './harness.js';
-import { NOW, project, tmp } from './helpers.js';
+import { project, tmp } from './helpers.js';
 
 const pt = (date: string, beta = 1): StagePoint => ({ date, counts: { 'Not started': 0, 'In progress': 1, Beta: beta, 'General Available': 0 } });
 
@@ -48,44 +51,5 @@ describe('stage history', () => {
     expect(await createHistoryStore(path).load()).toEqual([]);
     await writeFile(path, '"nope"');
     expect(await createHistoryStore(path).load()).toEqual([]);
-  });
-});
-
-describe('recording history from scans', () => {
-  it('records today after a scan with Notion connected and exposes it in the snapshot', async () => {
-    const h = await harness(board());
-    await h.svc.startScan();
-    expect(h.recorded).toHaveLength(1);
-    expect(h.recorded[0].date).toBe(localDate(NOW));
-    expect(h.recorded[0].counts).toEqual({ 'Not started': 0, 'In progress': 1, Beta: 3, 'General Available': 0 });
-    expect((await h.svc.getSnapshot()).stageHistory).toEqual(h.history());
-  });
-  it('keeps one point per day when scanned twice', async () => {
-    const h = await harness(board());
-    await h.svc.startScan();
-    await h.svc.startScan();
-    expect(h.history()).toHaveLength(1);
-  });
-  it('loads earlier history at startup', async () => {
-    const h = await harness({ ...board(), history: [pt('2026-09-01')] });
-    expect((await h.svc.getSnapshot()).stageHistory.map((p) => p.date)).toEqual(['2026-09-01']);
-    await h.svc.startScan();
-    expect((await h.svc.getSnapshot()).stageHistory.map((p) => p.date)).toEqual(['2026-09-01', localDate(NOW)]);
-  });
-  it('records nothing without Notion, since there are no stages to count', async () => {
-    const h = await harness({ ...board(), token: null });
-    await h.svc.startScan();
-    expect(h.recorded).toEqual([]);
-  });
-  it('records nothing when Notion is unreachable, so stale data never becomes history', async () => {
-    const h = await harness(board());
-    h.fake.failNext('query', 'offline');
-    await h.svc.startScan();
-    expect(h.recorded).toEqual([]);
-  });
-  it('still records when only the new properties are missing', async () => {
-    const h = await harness({ ...board(), schema: 'live' });
-    await h.svc.startScan();
-    expect(h.recorded).toHaveLength(1);
   });
 });

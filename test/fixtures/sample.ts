@@ -1,5 +1,5 @@
 import type { Criterion, Project } from '../../src/shared/types.js';
-import { computePulse } from '../../src/main/scanner/pulse.js';
+import { computePulse } from '../../src/shared/pulse.js';
 import { NOW, project } from '../helpers.js';
 
 const DAY = 86_400_000;
