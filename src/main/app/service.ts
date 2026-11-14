@@ -1,4 +1,4 @@
-import { fail, ok, REPO_ROLES, type AuthState, type FileContent, type PublicSettings, type RepoRef, type RepoRole, type Result, type SettingsPatch, type TreeEntry } from '../../shared/ipc.js';
+import { fail, ok, REPO_ROLES, type AuthState, type FileContent, type PublicSettings, type RepoList, type RepoRef, type RepoRole, type Result, type SettingsPatch, type TreeEntry } from '../../shared/ipc.js';
 import { normalizeHost } from '../github/host.js';
 import type { GitHubClient } from '../github/client.js';
 import { SecureStorageUnavailable, type TokenStore } from './secrets.js';
@@ -90,7 +90,7 @@ export class AppService {
     return ok(this.client);
   }
 
-  async listAvailableRepos(): Promise<Result<RepoRef[]>> {
+  async listAvailableRepos(): Promise<Result<RepoList>> {
     const c = this.requireClient();
     if (!c.ok) return c;
     try {

@@ -97,6 +97,7 @@ button.item:hover { background: var(--fill); }
 .fld textarea, .fld input, .fld select, .field { font: inherit; font-weight: 400; color: var(--label); background: var(--bg, var(--card)); border: 0; border-radius: 6px; padding: 6px 9px; box-shadow: 0 0 0 0.5px var(--sep), inset 0 0.5px 1px rgba(0, 0, 0, 0.08); resize: vertical; }
 .setrow { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .setrow .grow { flex: 1; min-width: 220px; }
+.token-change { display: flex; flex-direction: column; gap: 6px; }
 .setrow code { background: var(--fill); border-radius: 6px; padding: 4px 8px; overflow-wrap: anywhere; }
 .crash { max-width: 560px; margin: 12vh auto; padding: 0 20px; display: flex; flex-direction: column; gap: 12px; }
 .crash pre { background: var(--fill); border-radius: 8px; padding: 10px; white-space: pre-wrap; overflow-wrap: anywhere; margin: 0; }

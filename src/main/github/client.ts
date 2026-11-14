@@ -11,6 +11,15 @@ export interface RepoRef {
   htmlUrl: string;
 }
 
+export interface RepoList {
+  repos: RepoRef[];
+  /**
+   * True when the token is a classic PAT without the `repo` scope, so GitHub hides every private
+   * repo from it. Fine-grained tokens don't report scopes, so this stays false for them.
+   */
+  missingPrivateScope: boolean;
+}
+
 export interface TreeEntry {
   path: string;
   name: string;
@@ -29,8 +38,8 @@ export interface FileContent {
 export interface GitHubClient {
   /** Confirms the token works and returns who it belongs to. Throws on failure. */
   whoAmI(): Promise<{ login: string }>;
-  /** Repos the token can see, most recently pushed first, capped at 100. */
-  listRepos(): Promise<RepoRef[]>;
+  /** Every repo the token can see (all pages, up to MAX_REPOS), most recently pushed first. */
+  listRepos(): Promise<RepoList>;
   /** The entries of one folder (not recursive) in a repo at its default branch. */
   listTree(repo: RepoRef, path: string): Promise<TreeEntry[]>;
   /** One file's decoded text content. Files over 1 MB come back truncated rather than failing. */
@@ -38,6 +47,7 @@ export interface GitHubClient {
 }
 
 const MAX_FILE_BYTES = 1_000_000;
+const MAX_REPOS = 1000;
 
 function toRepoRef(r: { owner: { login: string }; name: string; full_name: string; default_branch: string; private: boolean; html_url: string }): RepoRef {
   return { owner: r.owner.login, name: r.name, fullName: r.full_name, defaultBranch: r.default_branch, private: r.private, htmlUrl: r.html_url };
@@ -61,8 +71,16 @@ export function createGitHubClient(host: string, token: string, fetchImpl: typeo
     },
 
     async listRepos() {
-      const { data } = await octokit.request('GET /user/repos', { per_page: 100, sort: 'pushed', affiliation: 'owner,collaborator,organization_member' });
-      return data.map(toRepoRef);
+      const repos: RepoRef[] = [];
+      let scopes: string | undefined;
+      for await (const page of octokit.paginate.iterator('GET /user/repos', { per_page: 100, sort: 'pushed', affiliation: 'owner,collaborator,organization_member' })) {
+        scopes ??= page.headers['x-oauth-scopes'] as string | undefined;
+        repos.push(...page.data.map(toRepoRef));
+        if (repos.length >= MAX_REPOS) break;
+      }
+      // Classic PATs list their scopes in this header; fine-grained tokens omit it entirely.
+      const missingPrivateScope = scopes !== undefined && !scopes.split(',').map((s) => s.trim()).includes('repo');
+      return { repos: repos.slice(0, MAX_REPOS), missingPrivateScope };
     },
 
     async listTree(repo, path) {
