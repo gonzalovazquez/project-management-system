@@ -63,6 +63,46 @@ export const MIGRATIONS: string[] = [
     product_id, repo_host, repo_full_name, kind, coalesce(path, ''), coalesce(anchor, ''), coalesce(pr_number, 0)
   );
   `,
+  // 2: workflow board (Phase 3a). Stages already have columns on links (reserved in 1); this adds
+  // the move history, the GitHub response cache, each item's derived state, and per-product sync status.
+  `
+  -- Every time an item is placed in, moved between or taken out of a stage. Phase 3b's
+  -- time-in-stage and stage-over-time views read this.
+  CREATE TABLE stage_events (
+    id          INTEGER PRIMARY KEY,
+    link_id     TEXT NOT NULL REFERENCES links(id) ON DELETE CASCADE,
+    product_id  TEXT NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+    from_stage  TEXT,
+    to_stage    TEXT,
+    at          TEXT NOT NULL
+  );
+  CREATE INDEX stage_events_by_product ON stage_events(product_id, at);
+
+  -- Conditional-request cache: the last body and ETag per GitHub request, shared across products.
+  CREATE TABLE http_cache (
+    key         TEXT PRIMARY KEY,
+    etag        TEXT,
+    status      INTEGER NOT NULL CHECK (status IN (200, 404)),
+    body        TEXT NOT NULL,
+    fetched_at  TEXT NOT NULL
+  );
+
+  -- What the last successful sync learned about each linked item.
+  CREATE TABLE item_state (
+    link_id    TEXT PRIMARY KEY REFERENCES links(id) ON DELETE CASCADE,
+    state      TEXT NOT NULL,
+    synced_at  TEXT NOT NULL
+  );
+
+  CREATE TABLE sync_status (
+    product_id       TEXT PRIMARY KEY REFERENCES products(id) ON DELETE CASCADE,
+    last_success_at  TEXT,
+    last_attempt_at  TEXT,
+    last_error       TEXT,
+    requests         INTEGER,
+    not_modified     INTEGER
+  );
+  `,
 ];
 
 export function openDatabase(file: string): DatabaseSync {

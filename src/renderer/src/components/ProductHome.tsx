@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ROLE_LABEL, type PublicSettings } from '../../../shared/ipc.js';
-import { ARTIFACT_TYPE_LABEL, ARTIFACT_TYPES, describeTarget, groupLinks, type ArtifactType, type Link, type ProductHome as Home } from '../../../shared/products.js';
+import { ARTIFACT_TYPE_LABEL, ARTIFACT_TYPES, describeTarget, groupLinks, STAGE_LABEL, type ArtifactType, type Link, type ProductHome as Home, type WorkflowStage } from '../../../shared/products.js';
+import { syncLine } from '../viewmodel/board.js';
+import { Board } from './Board.js';
 import { LinkPicker } from './LinkPicker.js';
 import { Preview } from './Preview.js';
 import { ProductForm } from './ProductForm.js';
@@ -12,7 +14,12 @@ interface Props {
   /** Called after anything that changes the sidebar's product list (rename, delete, links added). */
   onChanged: () => void;
   onDeleted: () => void;
+  tab: 'home' | 'board';
+  onTab: (t: 'home' | 'board') => void;
 }
+
+/** While a product is open, sync this often. With ETags an unchanged product costs a handful of free 304s. */
+const REFRESH_MS = 5 * 60_000;
 
 function Health({ link }: { link: Link }) {
   if (link.health.state === 'ok') return null;
@@ -21,15 +28,17 @@ function Health({ link }: { link: Link }) {
 }
 
 /**
- * One product in one place: its objective and KPIs, then the customers, artifacts and decisions
- * linked to it from the three repos, each opening a preview. Links are checked against GitHub
- * when the page opens, so a moved or deleted target shows up as broken with a way to fix it.
+ * One product in one place, with the objective pinned on top and two views below it: the home
+ * (customers, artifacts by type, decisions, each with a preview) and the five-stage workflow
+ * board. It renders straight from the local cache, then syncs with GitHub on open and every few
+ * minutes, so it opens instantly and still works offline.
  */
-export function ProductHome({ id, settings, onChanged, onDeleted }: Props) {
+export function ProductHome({ id, settings, onChanged, onDeleted, tab, onTab }: Props) {
   const [home, setHome] = useState<Home>();
   const [error, setError] = useState<string>();
   const [notice, setNotice] = useState<string>();
   const [checking, setChecking] = useState(false);
+  const [previewing, setPreviewing] = useState<Link>();
   const [selected, setSelected] = useState<Link>();
   const [sheet, setSheet] = useState<'edit' | 'link' | 'delete' | { relink: Link }>();
 
@@ -39,10 +48,15 @@ export function ProductHome({ id, settings, onChanged, onDeleted }: Props) {
 
   const check = useCallback(async () => {
     setChecking(true);
-    const r = await window.pmworkbench.checkLinks(id);
+    const r = await window.pmworkbench.syncProduct(id);
     setChecking(false);
-    if (r.ok) { setHome(r.value); changed.current(); } else setNotice(`Links not checked: ${r.message}`);
+    if (r.ok) { setHome(r.value); changed.current(); } else setNotice(`Not synced: ${r.message}`);
   }, [id]);
+
+  useEffect(() => {
+    const t = setInterval(() => { if (document.visibilityState === 'visible') void check(); }, REFRESH_MS);
+    return () => clearInterval(t);
+  }, [check]);
 
   const load = useCallback(async () => {
     const r = await window.pmworkbench.getProduct(id);
@@ -82,6 +96,16 @@ export function ProductHome({ id, settings, onChanged, onDeleted }: Props) {
     if (r.ok) await load(); else setNotice(r.message);
   };
 
+  // Optimistic: the card moves at once; a refusal puts it back and says why.
+  const move = async (l: Link, stage: WorkflowStage | null) => {
+    setHome((h) => h && { ...h, links: h.links.map((x) => (x.id === l.id ? { ...x, stage: stage ?? undefined, stageEnteredAt: stage ? new Date().toISOString() : undefined } : x)) });
+    const r = await window.pmworkbench.moveLink(l.id, stage);
+    if (!r.ok) setNotice(r.message);
+    await load();
+  };
+
+  const sl = syncLine(home.sync, checking, new Date());
+
   const exportIt = async () => {
     const r = await window.pmworkbench.exportProduct(id);
     if (!r.ok) setNotice(r.message);
@@ -118,17 +142,24 @@ export function ProductHome({ id, settings, onChanged, onDeleted }: Props) {
           </ul>
         )}
         <div className="setrow small">
+          <div className="seg small" role="tablist" aria-label="View">
+            <button role="tab" aria-selected={tab === 'home'} onClick={() => onTab('home')}>Home</button>
+            <button role="tab" aria-selected={tab === 'board'} onClick={() => onTab('board')}>Board</button>
+          </div>
           <span className="mut">{links.length} linked item{links.length === 1 ? '' : 's'}{broken ? ` · ` : ''}</span>
           {broken > 0 && <span style={{ color: 'var(--red)' }}>{broken} broken</span>}
           <span className="sp" />
-          <button className="btn" disabled={checking} onClick={() => void check()}>{checking ? 'Checking links…' : 'Check links'}</button>
+          <span className="sync-line" data-tone={sl.tone} title={home.sync.requests !== undefined ? `Last sync: ${home.sync.requests} requests, ${home.sync.notModified ?? 0} unchanged (304)` : undefined}>{sl.text}</span>
+          <button className="btn" disabled={checking} onClick={() => void check()}>Refresh</button>
           <button className="btn" onClick={() => void exportIt()}>Export mapping</button>
           <button className="btn danger" onClick={() => setSheet('delete')}>Delete</button>
         </div>
         {notice && <p className="banner info small">{notice}</p>}
       </section>
 
-      {links.length === 0 ? (
+      {links.length > 0 && tab === 'board' ? (
+        <Board home={home} onMove={(l, s) => void move(l, s)} onOpen={setPreviewing} />
+      ) : links.length === 0 ? (
         <div className="empty card">
           <b>Nothing linked yet</b>
           <span>Link artifacts, customers and conversations, and decision records from your three repos.</span>
@@ -173,6 +204,7 @@ export function ProductHome({ id, settings, onChanged, onDeleted }: Props) {
                   <div>
                     <h3>{selected.title}</h3>
                     <span className="mut small">{ROLE_LABEL[selected.role]} · {selected.repoFullName} · {describeTarget(selected)}</span>
+                    <span className="mut small">{selected.stage ? `Stage: ${STAGE_LABEL[selected.stage]}` : 'Unstaged'}</span>
                   </div>
                   <button className="btn danger small-btn" onClick={() => void remove(selected)}>Unlink</button>
                 </div>
@@ -202,6 +234,23 @@ export function ProductHome({ id, settings, onChanged, onDeleted }: Props) {
         </div>
       )}
 
+      {previewing && (
+        <Sheet
+          name="board-preview"
+          title={previewing.title}
+          width={640}
+          onClose={() => setPreviewing(undefined)}
+          footer={
+            <>
+              {previewing.health.state === 'broken' && <button className="btn" onClick={() => { setSheet({ relink: previewing }); setPreviewing(undefined); }}>Relink…</button>}
+              <button className="btn" data-autofocus onClick={() => setPreviewing(undefined)}>Close</button>
+            </>
+          }
+        >
+          <p className="mut small">{ROLE_LABEL[previewing.role]} · {previewing.repoFullName} · {describeTarget(previewing)}</p>
+          {previewing.health.state === 'broken' ? <p className="banner bad small">{previewing.health.reason}</p> : <div className="viewer sheet-preview"><Preview link={previewing} /></div>}
+        </Sheet>
+      )}
       {sheet === 'edit' && (
         <ProductForm product={product} onClose={() => setSheet(undefined)} onSaved={() => { setSheet(undefined); void load(); onChanged(); }} />
       )}

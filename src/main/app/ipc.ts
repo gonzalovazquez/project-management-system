@@ -44,7 +44,8 @@ export function registerIpc(ipc: IpcMain, service: AppService, deps: IpcDeps): v
   handle(CHANNELS.addLinks, (id: unknown, links: unknown) => service.addLinks(id, links));
   handle(CHANNELS.updateLink, (id: unknown, patch: unknown) => service.updateLink(id, patch));
   handle(CHANNELS.removeLink, (id: unknown) => service.removeLink(id));
-  handle(CHANNELS.checkLinks, (id: unknown) => service.checkLinks(id));
+  handle(CHANNELS.syncProduct, (id: unknown) => service.syncProduct(id));
+  handle(CHANNELS.moveLink, (id: unknown, stage: unknown) => service.moveLink(id, stage));
   handle(CHANNELS.exportProduct, (id: unknown) => service.exportProduct(id));
   handle(CHANNELS.importProduct, () => service.importProduct());
 }

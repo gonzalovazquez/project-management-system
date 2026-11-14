@@ -18,7 +18,7 @@ describe('product database migrations', () => {
     const db = openDatabase(':memory:');
     expect(schemaVersion(db)).toBe(MIGRATIONS.length);
     const tables = (db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").all() as { name: string }[]).map((r) => r.name);
-    expect(tables).toEqual(['kpis', 'links', 'products']);
+    expect(tables).toEqual(['http_cache', 'item_state', 'kpis', 'links', 'products', 'stage_events', 'sync_status']);
   });
 
   it('is a no-op on a database that is already current, and keeps its data', () => {
@@ -43,6 +43,23 @@ describe('product database migrations', () => {
     expect(() => migrate(db, ['CREATE TABLE a (x); CREATE TABLE a (x)'])).toThrow();
     expect(schemaVersion(db)).toBe(0);
     expect(db.prepare("SELECT count(*) AS n FROM sqlite_master WHERE name = 'a'").get()).toEqual({ n: 0 });
+  });
+
+  it('upgrades a schema-1 database in place, keeping products and links', () => {
+    const db = new DatabaseSync(':memory:');
+    db.exec('PRAGMA foreign_keys = ON;');
+    migrate(db, MIGRATIONS.slice(0, 1));
+    // Data as a schema-1 build wrote it.
+    const p = { id: '11111111-1111-1111-1111-111111111111' };
+    db.prepare("INSERT INTO products VALUES (?, 'Old', 'o', 't', 't')").run(p.id);
+    db.prepare("INSERT INTO links (id, product_id, role, kind, repo_host, repo_full_name, path, title, created_at) VALUES ('22222222-2222-2222-2222-222222222222', ?, 'artifacts', 'artifact', 'github.com', 'o/a', 'a.md', 'A', 't')").run(p.id);
+    migrate(db);
+    expect(schemaVersion(db)).toBe(MIGRATIONS.length);
+    const s = new ProductStore(db, () => NOW);
+    const [l] = s.links(p.id);
+    expect(l.stage).toBeUndefined();
+    expect(s.moveLink(l.id, 'solution')?.stage).toBe('solution');
+    expect(s.home(p.id)?.sync).toEqual({});
   });
 
   it('refuses a database written by a newer build', () => {
@@ -116,11 +133,11 @@ describe('ProductStore', () => {
     expect(moved).toMatchObject({ path: 'moved/a.md', artifactType: 'exec-comm', health: { state: 'unchecked' } });
   });
 
-  it('round-trips the reserved Phase 3 stage fields', () => {
+  it('round-trips the stage fields', () => {
     const s = store();
     const p = s.createProduct({ name: 'P', objective: '', kpis: [] });
-    s.addLinks(p.id, [link({ stage: 'problem-brief', stageEnteredAt: '2026-11-01T00:00:00.000Z' })]);
-    expect(s.links(p.id)[0]).toMatchObject({ stage: 'problem-brief', stageEnteredAt: '2026-11-01T00:00:00.000Z' });
+    s.addLinks(p.id, [link({ stage: 'problem', stageEnteredAt: '2026-11-01T00:00:00.000Z' })]);
+    expect(s.links(p.id)[0]).toMatchObject({ stage: 'problem', stageEnteredAt: '2026-11-01T00:00:00.000Z' });
   });
 });
 

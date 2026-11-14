@@ -19,6 +19,10 @@ a product home, broken-link detection, and export/import of a product's mapping.
 [`docs/decisions/product-model.md`](docs/decisions/product-model.md). The workflow board, flow
 metrics, and write-back via pull request are later phases.
 
+**Phase 3a** adds the per-product workflow board: five fixed stages, an unstaged tray, each item's
+live GitHub state, and a local cache so it opens instantly and works offline. See
+[`docs/decisions/workflow-board.md`](docs/decisions/workflow-board.md).
+
 ## Install
 
 There is no signed release. Build it yourself on the Mac you will use it on:
@@ -61,8 +65,14 @@ tested on Linux (the `.dmg` target needs macOS to build). To run from source ins
    (one click when the same content was found at a new path) or **Remove**.
 6. **Share.** **Export mapping** writes the product to a `.pmworkbench.json` file; a teammate uses
    **Import mapping…** on the Products page. Links whose repo isn't connected on their Mac are
-   listed and left out rather than failing the import.
-7. **Browse.** Each repo role in the sidebar still opens a read-only tree-and-file view.
+   listed and left out rather than failing the import. Stages travel with the mapping.
+7. **Workflow board.** The product's **Board** tab lays every linked item across the five stages —
+   intake and triage, problem brief, solution, specification, release and feedback — with
+   anything not yet placed in an **Unstaged** tray. Drag a card between columns, or use its stage
+   menu. Each card shows its GitHub state: a file's last change and who made it, or a pull
+   request's status (draft, open, changes requested, approved, merged, closed) and reviewers.
+   Filter by artifact type or customer. Moving a card only changes this Mac's mapping.
+8. **Browse.** Each repo role in the sidebar still opens a read-only tree-and-file view.
 
 ## Commands
 
@@ -93,16 +103,18 @@ settings and token storage. The interface reaches it only through the bridge in
 | `listPulls`, `readPull` | Pull requests in a role's repo, for linking and previewing PDRs under review |
 | `listProducts`, `getProduct`, `createProduct`, `updateProduct`, `deleteProduct` | The local product records (delete is local only) |
 | `addLinks`, `updateLink`, `removeLink` | Link items to a product, relink or relabel one, unlink |
-| `checkLinks` | Check a product's links against GitHub and record which are broken or moved |
+| `syncProduct` | Sync a product's items with GitHub: link health (broken, moved) and board state, through the response cache |
+| `moveLink` | Place an item in a workflow stage, or back in the unstaged tray |
 | `exportProduct`, `importProduct` | Save a product's mapping to a file, or import one as a new product |
 
 | Piece | Where | What it does |
 |---|---|---|
 | GitHub access | `src/main/github` | Host → API base URL, the network allow-list wrapper, the Octokit-based client |
 | App service | `src/main/app` | Sign-in/session, settings store, token storage (keychain-encrypted), IPC registration, sender-trust check |
-| Product model | `src/main/products`, `src/shared/products.ts` | SQLite schema and migrations, the product store, IPC input validation, link checks, the export format |
+| Product model | `src/main/products`, `src/shared/products.ts` | SQLite schema and migrations, the product store, IPC input validation, the export format |
+| Sync | `src/main/products/sync.ts`, `httpcache.ts` | Board state and link health from GitHub, conditional requests through a local response cache |
 | Shell | `src/main/index.ts`, `src/preload` | Window, security settings, the renderer-side network guard, bridge |
-| Interface | `src/renderer` | React: sign-in, repo-role settings, the tree/file browser, products, product home, link picker |
+| Interface | `src/renderer` | React: sign-in, repo-role settings, the tree/file browser, products, product home, link picker, workflow board |
 
 Safety properties, each covered by a test or `npm run smoke`:
 
@@ -127,10 +139,13 @@ App data (settings, encrypted token, `products.db`) lives in Electron's user dat
 
 ### Known limits
 
-- No workflow board or flow metrics yet (Phase 3). Each link has room for a stage, but nothing sets it.
+- No flow metrics view yet (Phase 3b). Stage moves are already recorded for it.
 - No write-back. Opening a PR from the app is Phase 4.
-- Link checks cost one GitHub request per link (plus a file read per linked conversation) each
-  time a product home opens. Fine for tens of links; Phase 3a adds the cache and conditional requests.
+- A sync reads one tree per repo, plus a commit lookup or blob read only for files whose content
+  changed, plus two reads per linked pull request. Unchanged data comes back as free 304s. See
+  the decision doc for measured costs.
+- If GitHub can't be reached at launch, the app opens signed in but marked offline, showing cached
+  data. A token GitHub rejects still signs you out.
 - Move detection matches unchanged content only. A CRM customer file usually changes as
   conversations are added, so a moved customer file shows as broken without a suggestion.
 - The 'Matrix' appearance theme from Project Dashboard was dropped rather than carried forward.

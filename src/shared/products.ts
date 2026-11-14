@@ -18,6 +18,28 @@ export const ARTIFACT_TYPE_LABEL: Record<ArtifactType, string> = {
 };
 
 /**
+ * The five workflow stages, fixed in v1 to match the team's process. An item sits in one stage or
+ * is unstaged; the PM places it, because nothing in the repos says which stage a file belongs to.
+ */
+export const STAGES = ['intake', 'problem', 'solution', 'specification', 'release'] as const;
+export type WorkflowStage = (typeof STAGES)[number];
+export const STAGE_LABEL: Record<WorkflowStage, string> = {
+  intake: 'Intake and triage',
+  problem: 'Problem brief',
+  solution: 'Solution',
+  specification: 'Specification',
+  release: 'Release and feedback',
+};
+export const STAGE_HINT: Record<WorkflowStage, string> = {
+  intake: 'New signals, customer asks, triage',
+  problem: 'Framing the problem',
+  solution: 'Options and journey analysis',
+  specification: 'Feature request handoff',
+  release: 'UAT, docs, release, customer feedback',
+};
+export const isStage = (v: unknown): v is WorkflowStage => STAGES.includes(v as WorkflowStage);
+
+/**
  * What a link points at. Which kinds a role allows is fixed: artifacts are files in the artifacts
  * repo; the CRM repo holds one file per customer with dated conversation sections inside it, so a
  * CRM link is either the whole customer file or one section of it; a PDR link is a decision record
@@ -45,6 +67,8 @@ export interface LinkInput extends LinkTarget {
   artifactType?: ArtifactType;
   /** Blob SHA of the file when it was linked, so a later move with unchanged content can be found again. */
   blobSha?: string;
+  /** The stage to place the item in straight away; omitted leaves it in the unstaged tray. */
+  stage?: WorkflowStage;
 }
 
 /** The link health last seen on GitHub. 'unchecked' until the first check after linking. */
@@ -63,8 +87,8 @@ export interface Link extends LinkTarget {
   title: string;
   artifactType?: ArtifactType;
   blobSha?: string;
-  /** Reserved for Phase 3's workflow board: the stage the PM placed this item in, and since when. */
-  stage?: string;
+  /** The workflow stage the PM placed this item in, and since when. Absent = unstaged. */
+  stage?: WorkflowStage;
   stageEnteredAt?: string;
   health: LinkHealth;
   createdAt: string;
@@ -98,9 +122,40 @@ export interface ProductInput {
   kpis: Kpi[];
 }
 
+/** An item's current state on GitHub, from the last successful sync. */
+export type ItemState =
+  | { kind: 'file'; exists: true; sha: string; lastChangedAt?: string; lastChangedBy?: string }
+  | { kind: 'file'; exists: false }
+  | { kind: 'pull'; status: PullStatus; title: string; updatedAt: string; reviewers: Reviewer[] };
+
+export type PullStatus = 'draft' | 'open' | 'changes-requested' | 'approved' | 'merged' | 'closed';
+export const PULL_STATUS_LABEL: Record<PullStatus, string> = {
+  draft: 'Draft', open: 'Open', 'changes-requested': 'Changes requested', approved: 'Approved', merged: 'Merged', closed: 'Closed',
+};
+
+export interface Reviewer {
+  login: string;
+  /** 'requested' = asked but hasn't reviewed yet. */
+  state: 'requested' | 'approved' | 'changes-requested' | 'commented' | 'dismissed';
+}
+
+/** How fresh a product's GitHub data is, and what the last sync cost. */
+export interface SyncStatus {
+  lastSuccessAt?: string;
+  lastAttemptAt?: string;
+  /** Why the last attempt failed, when it did (offline, rate limited, …). Cached data is still shown. */
+  lastError?: string;
+  /** Requests sent in the last sync, and how many of them came back 304 Not Modified (free against the rate limit). */
+  requests?: number;
+  notModified?: number;
+}
+
 export interface ProductHome {
   product: Product;
   links: Link[];
+  /** Keyed by link id. Missing until the item has synced once. */
+  states: Record<string, ItemState>;
+  sync: SyncStatus;
 }
 
 export interface PullSummary {
@@ -139,6 +194,22 @@ export type FileDialogResult<T> = { cancelled: true } | ({ cancelled: false } & 
 // ---------------------------------------------------------------------------------------------
 // Pure helpers
 // ---------------------------------------------------------------------------------------------
+
+/**
+ * A first guess at the stage an item belongs in, from what it is. Only ever a suggestion: the PM
+ * places every item, and a control book or an unclassified artifact gets no suggestion.
+ */
+export function suggestStage(l: Pick<LinkInput, 'kind' | 'artifactType'>): WorkflowStage | undefined {
+  if (l.kind === 'customer' || l.kind === 'conversation') return 'intake';
+  if (l.kind === 'decision') return 'specification';
+  switch (l.artifactType) {
+    case 'problem-brief': return 'problem';
+    case 'solution-brief': return 'solution';
+    case 'specification': return 'specification';
+    case 'exec-comm': return 'release';
+    default: return undefined;
+  }
+}
 
 /** A first guess at an artifact's type from where it sits in the repo. The PM can always change it. */
 export function suggestArtifactType(path: string): ArtifactType {

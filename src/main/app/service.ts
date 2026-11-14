@@ -2,10 +2,12 @@ import { fail, ok, REPO_ROLES, type AuthState, type FileContent, type PublicSett
 import type { AddLinksResult, FileDialogResult, ImportReport, Link, Product, ProductHome, ProductSummary, PullDetail, PullSummary } from '../../shared/products.js';
 import { normalizeHost } from '../github/host.js';
 import type { GitHubClient } from '../github/client.js';
-import { checkLinks } from '../products/linkcheck.js';
+import type { HttpCache } from '../products/httpcache.js';
+import { syncLinks } from '../products/sync.js';
 import { MappingError, parseMapping, planImport, toMapping } from '../products/mapping.js';
 import type { NewLink, ProductStore } from '../products/store.js';
 import { isId, isPrNumber, isRole, validateLinkInput, validateLinkPatch, validateProductInput } from '../products/validate.js';
+import { isStage } from '../../shared/products.js';
 import { SecureStorageUnavailable, type TokenStore } from './secrets.js';
 import type { SettingsStore } from './settings.js';
 
@@ -15,6 +17,8 @@ export interface ServiceDeps {
   /** Builds a client for one host+token pair. Never called with an unvalidated token held onto past the call that validates it. */
   createClient(host: string, token: string): GitHubClient;
   products: ProductStore;
+  /** GitHub response cache for the board sync; lives in the same database as the products. */
+  cache: HttpCache;
   /** Native file dialogs, behind an interface so tests can stand in for them. null means the PM cancelled. */
   files: {
     saveText(suggestedName: string, text: string): Promise<string | null>;
@@ -43,14 +47,25 @@ export class AppService {
     const settings = await this.d.settings.load();
     const { token, source } = await this.d.tokens.get();
     if (!settings.host || !token) return;
+    const client = this.d.createClient(settings.host, token);
+    const tokenSource = source === 'env' ? 'env' : 'keychain';
     try {
-      const client = this.d.createClient(settings.host, token);
       const { login } = await client.whoAmI();
       this.host = settings.host;
       this.token = token;
       this.client = client;
-      this.auth = { status: 'signed-in', host: settings.host, login, tokenSource: source === 'env' ? 'env' : 'keychain' };
-    } catch {
+      this.auth = { status: 'signed-in', host: settings.host, login, tokenSource };
+    } catch (e) {
+      const status = (e as { status?: number }).status;
+      if (status === undefined && settings.login) {
+        // GitHub didn't answer at all (offline, DNS, blocked): keep the session so cached products and
+        // boards still open. A token GitHub actually rejects (any HTTP status) still signs the PM out.
+        this.host = settings.host;
+        this.token = token;
+        this.client = client;
+        this.auth = { status: 'signed-in', host: settings.host, login: settings.login, tokenSource, offline: true };
+        return;
+      }
       // A stored token that no longer works just leaves the app signed out; the PM signs in again.
       this.auth = { status: 'signed-out' };
     }
@@ -81,7 +96,7 @@ export class AppService {
       if (!(e instanceof SecureStorageUnavailable)) throw e;
       return fail('invalid', e.message);
     }
-    await this.d.settings.save({ host });
+    await this.d.settings.save({ host, login });
     this.host = host;
     this.token = token;
     this.client = client;
@@ -283,22 +298,36 @@ export class AppService {
     return this.d.products.removeLink(linkId) ? ok(undefined) : fail('not-found', 'That link no longer exists.');
   }
 
-  async checkLinks(productId: unknown): Promise<Result<ProductHome>> {
+  /**
+   * Brings a product's items up to date with GitHub: link health (broken, moved) and board state.
+   * Always answers with the product home: when GitHub can't be reached or the rate limit is used
+   * up, the cached state comes back with the sync status saying why and how old it is.
+   */
+  async syncProduct(productId: unknown): Promise<Result<ProductHome>> {
     if (!isId(productId)) return fail('invalid', 'Unknown product.');
     const home = this.d.products.home(productId);
     if (!home) return fail('not-found', 'That product no longer exists.');
     const c = this.requireClient();
     if (!c.ok) return c;
     const s = await this.d.settings.load();
-    const outcomes = await checkLinks(home.links, s.host, s.repoRoles, c.value, this.now());
-    for (const o of outcomes) {
+    const r = await syncLinks(home.links, s.host, s.repoRoles, c.value, this.d.cache, home.states, this.now());
+    for (const o of r.outcomes) {
       if (o.health) this.d.products.setHealth(o.linkId, o.health);
+      if (o.state) this.d.products.setItemState(o.linkId, o.state);
       const link = home.links.find((l) => l.id === o.linkId);
       if (o.blobSha && link && link.blobSha !== o.blobSha) this.d.products.updateLink(o.linkId, { blobSha: o.blobSha });
     }
-    const errors = outcomes.filter((o) => o.error);
-    if (errors.length === outcomes.length && errors.length > 0) return fail('network', `Couldn't reach GitHub to check links: ${errors[0].error}`);
+    this.d.products.recordSync(productId, { ok: !r.error, error: r.error, requests: r.requests, notModified: r.notModified });
+    if (!r.error && this.auth.status === 'signed-in' && this.auth.offline) this.auth = { ...this.auth, offline: false };
     return ok(this.d.products.home(productId)!);
+  }
+
+  /** Places an item in a workflow stage, or back in the unstaged tray with null. Local only. */
+  async moveLink(linkId: unknown, stage: unknown): Promise<Result<Link>> {
+    if (!isId(linkId)) return fail('invalid', 'Unknown link.');
+    if (stage !== null && !isStage(stage)) return fail('invalid', 'Unknown stage.');
+    const l = this.d.products.moveLink(linkId, stage);
+    return l ? ok(l) : fail('not-found', 'That link no longer exists.');
   }
 
   async exportProduct(id: unknown): Promise<Result<FileDialogResult<{ path: string }>>> {

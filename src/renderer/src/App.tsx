@@ -57,7 +57,7 @@ export function App() {
   const meta =
     current.view === 'settings' ? { title: firstRun ? 'Connect your repos' : 'Settings', subtitle: firstRun ? 'One-time setup' : 'Repo roles and appearance' }
     : current.view === 'products' ? { title: 'Products', subtitle: 'Stored on this Mac only' }
-    : current.view === 'product' ? { title: productName, subtitle: 'Product home' }
+    : current.view === 'product' ? { title: productName, subtitle: current.tab === 'board' ? 'Workflow board' : 'Product home' }
     : { title: ROLE_LABEL[current.role], subtitle: settings.repoRoles[current.role]?.fullName ?? 'Not set' };
 
   return (
@@ -92,6 +92,8 @@ export function App() {
             <ProductHome
               key={current.id}
               id={current.id}
+              tab={current.tab ?? 'home'}
+              onTab={(tab) => setRoute({ view: 'product', id: current.id, tab })}
               settings={settings}
               onChanged={refreshProducts}
               onDeleted={() => { refreshProducts(); setRoute(DEFAULT_ROUTE); }}

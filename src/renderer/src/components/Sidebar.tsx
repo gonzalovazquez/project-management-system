@@ -43,7 +43,9 @@ export function Sidebar({ settings, auth, route, products, onNavigate }: Props) 
       <div className="sidefoot">
         {auth.status === 'signed-in' && (
           <>
-            <span><span className="dot" style={{ background: 'var(--green)' }} />{auth.login}</span>
+            <span title={auth.offline ? "GitHub couldn't be reached at launch; showing cached data" : undefined}>
+              <span className="dot" style={{ background: auth.offline ? 'var(--orange)' : 'var(--green)' }} />{auth.login}{auth.offline ? ' · offline' : ''}
+            </span>
             <span className="path">{auth.host}</span>
           </>
         )}

@@ -250,3 +250,33 @@ svg.heat rect { cursor: default; }
 .picked-list select { max-width: 150px; }
 .unresolved { margin: 6px 0 10px; padding-left: 18px; display: flex; flex-direction: column; gap: 6px; }
 @media (max-width: 1100px) { .home-grid { grid-template-columns: minmax(0, 1fr); } .preview { position: static; max-height: none; } }
+
+/* ---------- Workflow board (Phase 3a) ---------- */
+.sync-line { font-size: 11.5px; color: var(--label2); }
+.sync-line[data-tone="warn"] { color: var(--orange); }
+.picked-fields { display: flex; flex-direction: column; gap: 4px; }
+.picked-list li { grid-template-columns: minmax(0, 1fr) auto auto; }
+.board { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.board-filters { gap: 14px; }
+.tray h3, .col h3 { display: flex; gap: 8px; align-items: baseline; }
+.tray-cards { list-style: none; margin: 8px 0 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; }
+.columns { display: grid; grid-template-columns: repeat(5, minmax(175px, 1fr)); gap: 10px; overflow-x: auto; padding-bottom: 4px; align-items: start; }
+.col { padding: 10px; gap: 8px; min-height: 180px; }
+.col header { display: flex; flex-direction: column; gap: 2px; }
+.col ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.col .step { display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; background: var(--fill2); font-size: 11px; font-weight: 600; flex: none; }
+.col-empty { border: 1px dashed var(--sep); border-radius: 8px; padding: 14px 8px; text-align: center; }
+.tray[data-over], .col[data-over] { box-shadow: var(--shadow), 0 0 0 2px var(--blue); }
+.bcard { background: var(--bg); border-radius: 8px; box-shadow: 0 0 0 0.5px var(--sep); display: flex; flex-direction: column; cursor: grab; border-left: 3px solid var(--tone, var(--gray)); }
+.bcard[data-tone="ok"] { --tone: var(--green); }
+.bcard[data-tone="warn"] { --tone: var(--orange); }
+.bcard[data-tone="bad"] { --tone: var(--red); }
+.bcard[data-tone="done"] { --tone: var(--purple); }
+.bcard-main { border: 0; background: none; font: inherit; color: inherit; text-align: left; display: flex; flex-direction: column; gap: 3px; padding: 8px 10px 6px; border-radius: 8px; cursor: inherit; }
+.bcard-main b { font-weight: 600; font-size: 12.5px; overflow-wrap: anywhere; }
+.bcard-kind { font-size: 10.5px; font-weight: 600; color: var(--label2); text-transform: uppercase; letter-spacing: 0.03em; }
+.bcard-state { font-size: 11.5px; display: inline-flex; align-items: center; gap: 5px; }
+.bcard-state i { width: 7px; height: 7px; border-radius: 50%; background: var(--tone, var(--gray)); }
+.bcard-foot { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; padding: 0 10px 8px; }
+.bcard-foot select { font-size: 11.5px; max-width: 100%; }
+.sheet-preview { max-height: 55vh; overflow: auto; }

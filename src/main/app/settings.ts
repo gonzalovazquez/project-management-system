@@ -6,13 +6,15 @@ export interface StoredSettings {
   repoRoles: Partial<Record<RepoRole, RepoRef>>;
   appearance: Appearance;
   onboarded: boolean;
+  /** The GitHub login last signed in, so the app can open offline without asking GitHub who the token belongs to. */
+  login?: string;
 }
 
 export const defaultSettings = (): StoredSettings => ({ host: '', repoRoles: {}, appearance: 'system', onboarded: false });
 
 export interface SettingsStore {
   load(): Promise<StoredSettings>;
-  save(patch: SettingsPatch & { host?: string }): Promise<StoredSettings>;
+  save(patch: SettingsPatch & { host?: string; login?: string }): Promise<StoredSettings>;
 }
 
 const isRepoRef = (v: unknown): v is RepoRef => {
@@ -21,8 +23,9 @@ const isRepoRef = (v: unknown): v is RepoRef => {
 };
 
 /** Returns an error message, or undefined when the patch is acceptable. */
-export function validatePatch(patch: SettingsPatch & { host?: string }): string | undefined {
+export function validatePatch(patch: SettingsPatch & { host?: string; login?: string }): string | undefined {
   if (patch.host !== undefined && typeof patch.host !== 'string') return 'The host must be a string.';
+  if (patch.login !== undefined && typeof patch.login !== 'string') return 'The login must be a string.';
   if (patch.repoRoles !== undefined) {
     if (typeof patch.repoRoles !== 'object' || patch.repoRoles === null || Array.isArray(patch.repoRoles)) return 'Repo roles must be a map of role to repo.';
     for (const [role, repo] of Object.entries(patch.repoRoles)) {
@@ -53,6 +56,7 @@ export function createSettingsStore(path: string): SettingsStore {
       repoRoles: sanitizeRoles(stored?.repoRoles),
       appearance: stored?.appearance && APPEARANCES.includes(stored.appearance) ? stored.appearance : d.appearance,
       onboarded: typeof stored?.onboarded === 'boolean' ? stored.onboarded : d.onboarded,
+      ...(typeof stored?.login === 'string' && stored.login ? { login: stored.login } : {}),
     };
   };
   return {
@@ -73,6 +77,7 @@ export function createSettingsStore(path: string): SettingsStore {
         repoRoles,
         appearance: patch.appearance ?? current.appearance,
         onboarded: patch.onboarded ?? current.onboarded,
+        ...((patch.login ?? current.login) ? { login: patch.login ?? current.login } : {}),
       };
       await writeJsonAtomic(path, next);
       return next;

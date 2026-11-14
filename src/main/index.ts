@@ -11,6 +11,7 @@ import { isTrustedUrl } from './app/trust.js';
 import { apiHostname } from './github/host.js';
 import { createGitHubClient } from './github/client.js';
 import { openDatabase } from './products/db.js';
+import { HttpCache } from './products/httpcache.js';
 import { ProductStore } from './products/store.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -21,6 +22,7 @@ if (process.env.PMWORKBENCH_HOME) app.setPath('userData', process.env.PMWORKBENC
 
 function createService(): AppService {
   const data = app.getPath('userData');
+  const db = openDatabase(join(data, 'products.db'));
   return new AppService({
     settings: createSettingsStore(join(data, 'settings.json')),
     tokens: new TokenStore(join(data, 'token.bin'), {
@@ -30,7 +32,8 @@ function createService(): AppService {
     }),
     createClient: (host, token) => createGitHubClient(host, token),
     // The product mapping: local only, next to settings in the app's data folder.
-    products: new ProductStore(openDatabase(join(data, 'products.db'))),
+    products: new ProductStore(db),
+    cache: new HttpCache(db),
     files: {
       async saveText(suggestedName, text) {
         const win = BrowserWindow.getFocusedWindow();

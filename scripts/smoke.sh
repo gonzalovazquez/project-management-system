@@ -18,7 +18,7 @@ env -u GITHUB_TOKEN PMWORKBENCH_HOME="$work/data" PMWORKBENCH_SMOKE="$out" \
 echo "screenshot: $out.png"
 node -e '
 const r = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8").replace(/^SMOKE_RESULT /, ""));
-const expectKeys = ["addLinks","browseTree","checkLinks","createProduct","deleteProduct","exportProduct","getAuth","getProduct","getSettings","importProduct","listAvailableRepos","listProducts","listPulls","readFile","readPull","removeLink","saveSettings","signIn","signOut","updateLink","updateProduct"];
+const expectKeys = ["addLinks","browseTree","createProduct","deleteProduct","exportProduct","getAuth","getProduct","getSettings","importProduct","listAvailableRepos","listProducts","listPulls","moveLink","readFile","readPull","removeLink","saveSettings","signIn","signOut","syncProduct","updateLink","updateProduct"];
 const checks = {
   "no launch error": !r.error,
   "signed out with no token configured": r.authStatus === "signed-out",

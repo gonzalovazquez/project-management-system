@@ -7,7 +7,8 @@
  * Without PMWORKBENCH_HOME it writes to the app's normal data folder
  * (~/Library/Application Support/PM Workbench). --assign-roles also points the three repo roles at
  * <owner>/pm-artifacts, <owner>/pm-crm and <owner>/pm-pdr. Products that already exist by name are
- * left alone, so running it twice is harmless. Nothing here talks to GitHub; open each product in
+ * left alone, so running it twice is harmless. Most items are placed in a workflow stage; the control
+ * book and one Globex conversation are left unstaged so the board's tray has something in it. Nothing here talks to GitHub; open each product in
  * the app to check its links.
  */
 import { homedir } from 'node:os';
@@ -42,11 +43,11 @@ const SAMPLES = [
     },
     links: [
       l('artifacts', { kind: 'artifact', path: 'control-book/checkout-retry-flow.md', title: 'Control Book — Checkout Retry Flow', artifactType: 'control-book' }),
-      l('artifacts', { kind: 'artifact', path: 'exec-comms/2026-10-weekly-update.md', title: 'Weekly Update — 2026-10-12', artifactType: 'exec-comm' }),
-      l('crm', { kind: 'customer', path: 'customers/acme-corp.md', title: 'Acme Corp' }),
-      l('crm', { kind: 'conversation', path: 'customers/acme-corp.md', anchor: '2026-09-18--checkout-retry-friction', title: '2026-09-18 — Checkout retry friction' }),
-      l('crm', { kind: 'conversation', path: 'customers/acme-corp.md', anchor: '2026-10-02--follow-up', title: '2026-10-02 — Follow-up' }),
-      l('pdr', { kind: 'decision', path: 'specs/spec-003-checkout-retry.md', title: 'SPEC-003: Checkout Retry Flow' }),
+      l('artifacts', { kind: 'artifact', path: 'exec-comms/2026-10-weekly-update.md', title: 'Weekly Update — 2026-10-12', artifactType: 'exec-comm', stage: 'release' }),
+      l('crm', { kind: 'customer', path: 'customers/acme-corp.md', title: 'Acme Corp', stage: 'intake' }),
+      l('crm', { kind: 'conversation', path: 'customers/acme-corp.md', anchor: '2026-09-18--checkout-retry-friction', title: '2026-09-18 — Checkout retry friction', stage: 'intake' }),
+      l('crm', { kind: 'conversation', path: 'customers/acme-corp.md', anchor: '2026-10-02--follow-up', title: '2026-10-02 — Follow-up', stage: 'problem' }),
+      l('pdr', { kind: 'decision', path: 'specs/spec-003-checkout-retry.md', title: 'SPEC-003: Checkout Retry Flow', stage: 'specification' }),
     ],
   },
   {
@@ -56,8 +57,8 @@ const SAMPLES = [
       kpis: [],
     },
     links: [
-      l('crm', { kind: 'customer', path: 'customers/globex.md', title: 'Globex Industries' }),
-      l('crm', { kind: 'conversation', path: 'customers/globex.md', anchor: '2026-08-30--quarterly-business-review-notes', title: '2026-08-30 — Quarterly business review notes' }),
+      l('crm', { kind: 'customer', path: 'customers/globex.md', title: 'Globex Industries', stage: 'intake' }),
+      l('crm', { kind: 'conversation', path: 'customers/globex.md', anchor: '2026-08-30--quarterly-business-review-notes', title: '2026-08-30 — Quarterly business review notes', stage: 'intake' }),
       l('crm', { kind: 'conversation', path: 'customers/globex.md', anchor: '2026-10-10--renewal-prep-call', title: '2026-10-10 — Renewal prep call' }),
       l('artifacts', { kind: 'artifact', path: 'exec-comms/2026-10-weekly-update.md', title: 'Weekly Update — 2026-10-12', artifactType: 'exec-comm' }),
     ],
