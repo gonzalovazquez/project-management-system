@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { DEFAULT_METRIC_SETTINGS, type MetricSettings } from '../../../shared/metrics.js';
-import { STAGE_LABEL, STAGES } from '../../../shared/products.js';
+import { ARTIFACT_TYPE_LABEL, ARTIFACT_TYPES, STAGE_LABEL, STAGES, type ArtifactType } from '../../../shared/products.js';
 import { APPEARANCES, ROLE_LABEL, REPO_ROLES, type Appearance, type AuthState, type PublicSettings, type RepoRef, type RepoRole } from '../../../shared/ipc.js';
 
 const APPEARANCE_LABEL: Record<Appearance, string> = { system: 'Match system', light: 'Light', dark: 'Dark' };
@@ -87,6 +87,25 @@ export function Settings({ auth, onAuth, settings, first, onSettings, onSignedOu
   };
   const days = (v: string) => Math.round(Number(v));
 
+  const [templates, setTemplates] = useState<Partial<Record<ArtifactType, string>>>(settings.templates);
+  const [tplMsg, setTplMsg] = useState<{ ok: boolean; text: string }>();
+  const templatesDirty = JSON.stringify(templates) !== JSON.stringify(settings.templates);
+  const saveTemplates = async () => {
+    setTplMsg(undefined);
+    // Check each path really is a file in the artifacts repo before saving it.
+    for (const [t, p] of Object.entries(templates)) {
+      if (!p || p === settings.templates[t as ArtifactType]) continue;
+      const r = await window.pmworkbench.readFile('artifacts', p.trim());
+      if (!r.ok) { setTplMsg({ ok: false, text: `${ARTIFACT_TYPE_LABEL[t as ArtifactType]}: ${p} — ${r.message}` }); return; }
+    }
+    const patch = Object.fromEntries(ARTIFACT_TYPES.map((t) => [t, templates[t]?.trim() || null]));
+    const r = await window.pmworkbench.saveSettings({ templates: patch });
+    if (!r.ok) { setTplMsg({ ok: false, text: r.message }); return; }
+    onSettings(r.value);
+    setTemplates(r.value.templates);
+    setTplMsg({ ok: true, text: 'Templates saved.' });
+  };
+
   const ready = REPO_ROLES.every((r) => settings.repoRoles[r]);
 
   return (
@@ -160,6 +179,26 @@ export function Settings({ auth, onAuth, settings, first, onSettings, onSignedOu
           </p>
         )}
       </form>
+      {!first && (
+        <form className="review-points" onSubmit={(e) => { e.preventDefault(); void saveTemplates(); }}>
+          <span className="mut small">
+            Artifact templates: the file in {settings.repoRoles.artifacts?.fullName ?? 'the artifacts repo'} that a new artifact of each type starts from.
+            Leave one empty to start blank. <code className="mono">{'{{title}}'}</code>, <code className="mono">{'{{product}}'}</code> and <code className="mono">{'{{date}}'}</code> are filled in.
+          </span>
+          <div className="tpl-grid">
+            {ARTIFACT_TYPES.map((t) => (
+              <label key={t} className="fld">
+                {ARTIFACT_TYPE_LABEL[t]}
+                <input className="mono" value={templates[t] ?? ''} placeholder="templates/…md" onChange={(e) => setTemplates({ ...templates, [t]: e.target.value })} />
+              </label>
+            ))}
+          </div>
+          <div className="setrow">
+            <button className="btn" type="submit" disabled={!templatesDirty}>Save templates</button>
+            {tplMsg && <span className="small" style={{ color: tplMsg.ok ? 'var(--green)' : 'var(--red)' }}>{tplMsg.text}</span>}
+          </div>
+        </form>
+      )}
       {!first && (
         <form className="review-points" onSubmit={(e) => { e.preventDefault(); void saveMetrics(metrics); }}>
           <span className="mut small">

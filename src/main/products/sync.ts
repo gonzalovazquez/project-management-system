@@ -27,6 +27,8 @@ export interface SyncOutcome {
   state?: ItemState;
   blobSha?: string;
   error?: string;
+  /** The item's app pull request merged: the link should stop being pending. */
+  clearPending?: boolean;
 }
 
 export interface SyncResult {
@@ -211,10 +213,25 @@ export async function syncLinks(
     return { linkId: l.id, health: ok, state: { kind: 'pull', status, title: pr.body.title, updatedAt: pr.body.updatedAt, reviewers, activity } };
   };
 
+  /**
+   * A new item still on an app branch: its state is its pull request's. Once merged it becomes an
+   * ordinary file link (and is checked as one straight away); closed unmerged, the link is broken.
+   */
+  const pendingItem = async (l: Link, repo: RepoRef): Promise<SyncOutcome> => {
+    const { prNumber } = l.pending!;
+    const pr = await pullItem({ ...l, prNumber }, repo);
+    if (!pr.state || pr.state.kind !== 'pull') return { ...pr, health: broken(`Pull request #${prNumber}, which adds this item, no longer exists in ${repo.fullName}.`) };
+    if (pr.state.status === 'merged') return { ...(await fileItem(l, repo)), clearPending: true };
+    if (pr.state.status === 'closed') return { linkId: l.id, health: broken(`Pull request #${prNumber}, which adds this item, was closed without merging.`) };
+    const { status, reviewers, updatedAt, activity } = pr.state;
+    return { linkId: l.id, health: ok, state: { kind: 'pending', prNumber, status, reviewers, updatedAt, ...(activity ? { activity } : {}) } };
+  };
+
   const one = async (l: Link): Promise<SyncOutcome> => {
     const repo = repoFor(l);
     if (!repo) return { linkId: l.id, health: broken(`${l.repoFullName} on ${l.repoHost} is not one of your connected repos.`) };
     try {
+      if (l.pending) return await pendingItem(l, repo);
       return l.prNumber !== undefined ? await pullItem(l, repo) : await fileItem(l, repo);
     } catch (e) {
       return { linkId: l.id, error: e instanceof Error ? e.message : String(e) };

@@ -91,6 +91,11 @@ export interface Link extends LinkTarget {
   /** The workflow stage the PM placed this item in, and since when. Absent = unstaged. */
   stage?: WorkflowStage;
   stageEnteredAt?: string;
+  /**
+   * Set while the item exists only on a branch the app opened a pull request from (Phase 4): the
+   * link points at where the file will be once merged. Cleared when the pull request merges.
+   */
+  pending?: { prNumber: number; branch: string };
   health: LinkHealth;
   createdAt: string;
 }
@@ -127,7 +132,9 @@ export interface ProductInput {
 export type ItemState =
   | { kind: 'file'; exists: true; sha: string; lastChangedAt?: string; lastChangedBy?: string; activity?: ActivityEvent[] }
   | { kind: 'file'; exists: false }
-  | { kind: 'pull'; status: PullStatus; title: string; updatedAt: string; reviewers: Reviewer[]; activity?: ActivityEvent[] };
+  | { kind: 'pull'; status: PullStatus; title: string; updatedAt: string; reviewers: Reviewer[]; activity?: ActivityEvent[] }
+  /** A new item waiting in an app-opened pull request. */
+  | { kind: 'pending'; prNumber: number; status: PullStatus; reviewers: Reviewer[]; updatedAt: string; activity?: ActivityEvent[] };
 
 /**
  * Something that happened to an item on GitHub, for the flow metrics: a commit touching a linked

@@ -48,4 +48,8 @@ export function registerIpc(ipc: IpcMain, service: AppService, deps: IpcDeps): v
   handle(CHANNELS.moveLink, (id: unknown, stage: unknown) => service.moveLink(id, stage));
   handle(CHANNELS.exportProduct, (id: unknown) => service.exportProduct(id));
   handle(CHANNELS.importProduct, () => service.importProduct());
+  handle(CHANNELS.previewWrite, (draft: unknown) => service.previewWrite(draft));
+  handle(CHANNELS.confirmWrite, (id: unknown) => service.confirmWrite(id));
+  handle(CHANNELS.editSource, (id: unknown) => service.editSource(id));
+  handle(CHANNELS.openOnGitHub, (url: unknown) => service.openOnGitHub(url));
 }

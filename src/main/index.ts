@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, nativeTheme, safeStorage, session } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, nativeTheme, safeStorage, session, shell } from 'electron';
 import { readFile, stat, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -30,7 +30,8 @@ function createService(): AppService {
       encrypt: (s) => safeStorage.encryptString(s),
       decrypt: (b) => safeStorage.decryptString(b),
     }),
-    createClient: (host, token) => createGitHubClient(host, token),
+    createClient: (host, token, guard) => createGitHubClient(host, token, fetch, guard),
+    openExternal: (url) => shell.openExternal(url),
     // The product mapping: local only, next to settings in the app's data folder.
     products: new ProductStore(db),
     cache: new HttpCache(db),

@@ -48,6 +48,10 @@ export function cardFor(l: Link, s: ItemState | undefined, now: Date): Card {
   const base = { link: l, kindLabel: kindLabel(l), suggested: suggestStage(l) };
   if (l.health.state === 'broken') return { ...base, stateLabel: 'Broken link', tone: 'bad', detail: l.health.reason };
   if (!s) return { ...base, stateLabel: 'Not synced yet', tone: 'neutral' };
+  if (s.kind === 'pending') {
+    const tone: Tone = s.status === 'approved' ? 'ok' : s.status === 'changes-requested' ? 'warn' : 'neutral';
+    return { ...base, stateLabel: `Pending · PR #${s.prNumber} ${PULL_STATUS_LABEL[s.status].toLowerCase()}`, tone, updatedAt: s.updatedAt, detail: 'Not on the default branch until the pull request merges' };
+  }
   if (s.kind === 'file') {
     if (!s.exists) return { ...base, stateLabel: 'Not on default branch', tone: 'bad' };
     return {

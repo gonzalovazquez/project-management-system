@@ -112,6 +112,28 @@ export const MIGRATIONS: string[] = [
     PRIMARY KEY (product_id, date)
   );
   `,
+  // 4: write-back (Phase 4a). Every branch and pull request the app opened, and links that point at
+  // an item which only exists on such a branch until its pull request merges.
+  `
+  CREATE TABLE writes (
+    id              TEXT PRIMARY KEY,
+    product_id      TEXT REFERENCES products(id) ON DELETE SET NULL,
+    role            TEXT NOT NULL,
+    repo_host       TEXT NOT NULL,
+    repo_full_name  TEXT NOT NULL,
+    base            TEXT NOT NULL,
+    branch          TEXT NOT NULL,
+    pr_number       INTEGER,
+    pr_url          TEXT,
+    title           TEXT NOT NULL,
+    paths           TEXT NOT NULL,
+    created_at      TEXT NOT NULL,
+    updated_at      TEXT NOT NULL,
+    UNIQUE (repo_host, repo_full_name, branch)
+  );
+  ALTER TABLE links ADD COLUMN pending_pr INTEGER;
+  ALTER TABLE links ADD COLUMN pending_branch TEXT;
+  `,
 ];
 
 export function openDatabase(file: string): DatabaseSync {

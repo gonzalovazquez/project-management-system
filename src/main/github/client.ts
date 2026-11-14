@@ -1,6 +1,7 @@
 import { Octokit } from '@octokit/rest';
 import { apiBaseUrl } from './host.js';
 import { createGuardedFetch } from './allowlist.js';
+import { createWriteGuard, type WriteGuardOptions } from '../write/guard.js';
 import type { PullDetail, PullSummary } from '../../shared/products.js';
 
 export interface RepoRef {
@@ -55,6 +56,20 @@ export interface GitHubClient {
   listPulls(repo: RepoRef): Promise<PullSummary[]>;
   /** One pull request, or null when it doesn't exist (404). */
   getPull(repo: RepoRef, number: number): Promise<PullDetail | null>;
+
+  // Writes. Only the write engine (src/main/write/engine.ts) calls these, and every one also passes
+  // the network write guard (src/main/write/guard.ts).
+  /** A branch's head commit SHA, or null when the branch doesn't exist. */
+  branchHead(repo: RepoRef, branch: string): Promise<string | null>;
+  /** A file's text and blob SHA at a ref, or null when it isn't there. */
+  fileAt(repo: RepoRef, path: string, ref: string): Promise<{ content: string; sha: string } | null>;
+  /** One commit on top of `parent` that writes each file (create or replace). Returns the new commit's SHA. */
+  commitFiles(repo: RepoRef, parent: string, files: { path: string; content: string }[], message: string): Promise<string>;
+  createBranch(repo: RepoRef, branch: string, sha: string): Promise<void>;
+  /** Fast-forwards an app branch to `sha`; never forced. */
+  moveBranch(repo: RepoRef, branch: string, sha: string): Promise<void>;
+  deleteBranch(repo: RepoRef, branch: string): Promise<void>;
+  openPull(repo: RepoRef, p: { title: string; body: string; head: string; base: string }): Promise<{ number: number; url: string }>;
 }
 
 export type ConditionalResult = { status: 200; data: unknown; etag?: string } | { status: 304 } | { status: 404 };
@@ -88,10 +103,11 @@ function toRepoRef(r: { owner: { login: string }; name: string; full_name: strin
  * allow-list so nothing but the configured host is ever reached. See
  * docs/decisions/github-access.md for why this is the API rather than a local clone.
  */
-export function createGitHubClient(host: string, token: string, fetchImpl: typeof fetch = fetch): GitHubClient {
+export function createGitHubClient(host: string, token: string, fetchImpl: typeof fetch = fetch, writeGuard: WriteGuardOptions = { defaultBranches: () => ({}) }): GitHubClient {
   const baseUrl = apiBaseUrl(host);
   const allowedHostname = new URL(baseUrl).hostname;
-  const guarded = createGuardedFetch(() => allowedHostname, fetchImpl);
+  // Write guard first, then the host allow-list: a write must pass both before anything is sent.
+  const guarded = createWriteGuard(writeGuard, createGuardedFetch(() => allowedHostname, fetchImpl));
   const octokit = new Octokit({ auth: token, baseUrl, request: { fetch: guarded } });
 
   return {
@@ -175,6 +191,56 @@ export function createGitHubClient(host: string, token: string, fetchImpl: typeo
         if (isNotFound(e)) return null;
         throw e;
       }
+    },
+
+    async branchHead(repo, branch) {
+      try {
+        const { data } = await octokit.request('GET /repos/{owner}/{repo}/git/ref/{ref}', { owner: repo.owner, repo: repo.name, ref: `heads/${branch}` });
+        return data.object.sha;
+      } catch (e) {
+        if (isNotFound(e)) return null;
+        throw e;
+      }
+    },
+
+    async fileAt(repo, path, ref) {
+      try {
+        const { data } = await octokit.request('GET /repos/{owner}/{repo}/contents/{path}', { owner: repo.owner, repo: repo.name, path, ref });
+        if (Array.isArray(data) || data.type !== 'file') return null;
+        if (data.content !== undefined && data.encoding === 'base64') return { content: Buffer.from(data.content, 'base64').toString('utf8'), sha: data.sha };
+        const blob = await octokit.request('GET /repos/{owner}/{repo}/git/blobs/{file_sha}', { owner: repo.owner, repo: repo.name, file_sha: data.sha });
+        return { content: Buffer.from(blob.data.content, blob.data.encoding as BufferEncoding).toString('utf8'), sha: data.sha };
+      } catch (e) {
+        if (isNotFound(e)) return null;
+        throw e;
+      }
+    },
+
+    async commitFiles(repo, parent, files, message) {
+      const o = { owner: repo.owner, repo: repo.name };
+      const { data: base } = await octokit.request('GET /repos/{owner}/{repo}/git/commits/{commit_sha}', { ...o, commit_sha: parent });
+      const { data: tree } = await octokit.request('POST /repos/{owner}/{repo}/git/trees', {
+        ...o, base_tree: base.tree.sha, tree: files.map((f) => ({ path: f.path, mode: '100644' as const, type: 'blob' as const, content: f.content })),
+      });
+      const { data: commit } = await octokit.request('POST /repos/{owner}/{repo}/git/commits', { ...o, message, tree: tree.sha, parents: [parent] });
+      return commit.sha;
+    },
+
+    async createBranch(repo, branch, sha) {
+      await octokit.request('POST /repos/{owner}/{repo}/git/refs', { owner: repo.owner, repo: repo.name, ref: `refs/heads/${branch}`, sha });
+    },
+
+    async moveBranch(repo, branch, sha) {
+      await octokit.request('PATCH /repos/{owner}/{repo}/git/refs/{ref}', { owner: repo.owner, repo: repo.name, ref: `heads/${branch}`, sha, force: false });
+    },
+
+    async deleteBranch(repo, branch) {
+      await octokit.request('DELETE /repos/{owner}/{repo}/git/refs/{ref}', { owner: repo.owner, repo: repo.name, ref: `heads/${branch}` });
+    },
+
+    async openPull(repo, p) {
+      const { data } = await octokit.request('POST /repos/{owner}/{repo}/pulls', { owner: repo.owner, repo: repo.name, title: p.title, body: p.body, head: p.head, base: p.base });
+      return { number: data.number, url: data.html_url };
     },
   };
 }
