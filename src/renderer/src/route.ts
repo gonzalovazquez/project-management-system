@@ -2,6 +2,7 @@ import type { RepoRole } from '../../shared/ipc.js';
 
 export type Route =
   | { view: 'products' }
+  | { view: 'pulls' }
   | { view: 'product'; id: string; tab?: 'home' | 'board' | 'metrics' }
   | { view: 'browse'; role: RepoRole }
   | { view: 'settings' };

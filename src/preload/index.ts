@@ -33,6 +33,9 @@ const api: PMWorkbenchApi = {
   confirmWrite: (id) => ipcRenderer.invoke(CHANNELS.confirmWrite, id),
   editSource: (linkId) => ipcRenderer.invoke(CHANNELS.editSource, linkId),
   openOnGitHub: (url) => ipcRenderer.invoke(CHANNELS.openOnGitHub, url),
+  crmLayout: () => ipcRenderer.invoke(CHANNELS.crmLayout),
+  pdrLayout: () => ipcRenderer.invoke(CHANNELS.pdrLayout),
+  listAppPulls: () => ipcRenderer.invoke(CHANNELS.listAppPulls),
 };
 
 contextBridge.exposeInMainWorld('pmworkbench', api);

@@ -50,7 +50,11 @@ export function cardFor(l: Link, s: ItemState | undefined, now: Date): Card {
   if (!s) return { ...base, stateLabel: 'Not synced yet', tone: 'neutral' };
   if (s.kind === 'pending') {
     const tone: Tone = s.status === 'approved' ? 'ok' : s.status === 'changes-requested' ? 'warn' : 'neutral';
-    return { ...base, stateLabel: `Pending · PR #${s.prNumber} ${PULL_STATUS_LABEL[s.status].toLowerCase()}`, tone, updatedAt: s.updatedAt, detail: 'Not on the default branch until the pull request merges' };
+    const comments = s.unresolvedComments ? ` · ${s.unresolvedComments} unresolved comment${s.unresolvedComments === 1 ? '' : 's'}` : '';
+    return {
+      ...base, stateLabel: `Pending · PR #${s.prNumber} ${PULL_STATUS_LABEL[s.status].toLowerCase()}`, tone: s.status === 'merged' ? 'done' : tone, updatedAt: s.updatedAt,
+      detail: s.status === 'merged' ? 'Merged into its base branch; on the default branch after the next release' : `Not on the default branch until the pull request merges${comments}`,
+    };
   }
   if (s.kind === 'file') {
     if (!s.exists) return { ...base, stateLabel: 'Not on default branch', tone: 'bad' };
@@ -62,7 +66,8 @@ export function cardFor(l: Link, s: ItemState | undefined, now: Date): Card {
   const tone: Tone = s.status === 'merged' ? 'done' : s.status === 'approved' ? 'ok' : s.status === 'changes-requested' ? 'warn' : s.status === 'closed' ? 'bad' : 'neutral';
   const waiting = s.reviewers.filter((r) => r.state === 'requested').map((r) => r.login);
   const decided = s.reviewers.filter((r) => r.state === 'approved' || r.state === 'changes-requested').map((r) => `${r.login} ${r.state === 'approved' ? '✓' : '✗'}`);
-  const detail = [decided.join(', '), waiting.length ? `waiting on ${waiting.join(', ')}` : ''].filter(Boolean).join(' · ');
+  const comments = s.unresolvedComments ? `${s.unresolvedComments} unresolved comment${s.unresolvedComments === 1 ? '' : 's'}` : '';
+  const detail = [decided.join(', '), waiting.length ? `waiting on ${waiting.join(', ')}` : '', comments].filter(Boolean).join(' · ');
   return { ...base, stateLabel: PULL_STATUS_LABEL[s.status], tone, updatedAt: s.updatedAt, detail: detail || undefined };
 }
 

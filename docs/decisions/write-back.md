@@ -124,3 +124,102 @@ These PRs are left open for review. Close them and delete their branches when do
 **Not explained:** in the first end-to-end run, the app window closed during a run of bridge calls,
 right after #2 was opened. Nothing was left half-done. Two more runs with main-process logging, one
 repeating that run's exact sequence, did not reproduce it.
+
+---
+
+# Phase 4b: CRM conversations, PDRs, approval status
+
+**Also flagged for human review before merge**, since it extends writes to the CRM and PDR repos.
+Everything goes through the same engine, preview and guards as above.
+
+## CRM conversations
+
+- **Layout is read from the repo** (`detectCrmLayout`): the folder whose Markdown files most often
+  carry dated `## YYYY-MM-DD — topic` sections, the customers in it (each file's `# Name`), and the
+  heading separator they use.
+  - In the test repo that's `customers/`, with ` — `.
+  - Nothing is hard-coded, and the PM can type another path for a new customer.
+- **Logging** appends a `## <date> — <topic>` section to the customer's file, with a participants
+  line and the notes, in the repo's own style. A new customer gets a new file starting `# <Name>`.
+- **Through the engine.** If an app pull request is already open on that customer's file, the
+  conversation is added to it as a commit; otherwise a `pmworkbench/crm/<customer>-<date>` branch
+  and pull request are opened.
+- **Linking.** The conversation (and, for a new customer, the customer) is linked to the product,
+  pending, in **intake and triage** by default. Its anchor is computed from the new content, so it
+  resolves once merged.
+
+## PDRs and the repo's branch convention
+
+- **Layout** (`detectPdrLayout`): the folder with the most records, and a `<prefix>-<NNN>-` naming
+  pattern if there is one. A new record continues the sequence: `specs/spec-004-….md` after
+  `spec-003`. A title that already carries the number isn't repeated in the file name.
+- **Template.** It uses a `*template*.md` file found in the PDR repo. If there is none, it offers a
+  minimal structure (status, owner, reviewers, problem, options, decision, consequences) that the
+  PM sees and edits before sending.
+- **Convention** (`suggestConvention`):
+  - **Base:** the most common base of existing pull requests. With no pull requests, a `develop`
+    branch means git-flow, so the base is `develop`; otherwise the default branch.
+  - **Prefix:** the most common `prefix/` among branches and pull-request heads. With no history,
+    it comes from the records folder (`specs` → `spec/`).
+  - **Confirmed once.** The PM confirms or edits both the first time. The choice is saved per repo
+    (`settings.json` → `branchConventions`) and reused, and can be changed later.
+  - **Test repo:** "a develop branch exists (git-flow); no branch history, so spec/ from the specs
+    folder".
+- **The pull request** goes from `<prefix><file-stem>` (for example `spec/spec-004-retry-limits`)
+  into the confirmed base. Nothing is written to `develop` or `main`.
+
+## Guard changes for conventions
+
+The network write guard and the engine's `assertWritableBranch` now have two modes.
+
+| Mode | Allowed when |
+|---|---|
+| **create** (`POST git/refs`) | The branch is under `pmworkbench/` **or** under a prefix the PM confirmed for that repo. |
+| **modify** (fast-forward, delete, or the head of a new pull request) | The branch is under `pmworkbench/` **or** is one the app itself created (in its `writes` record). |
+
+So a confirmed prefix like `spec/` lets the app *create* `spec/…` branches, but never move or
+delete someone else's `spec/…` branch. Protected names (`main`, `master`, `develop`, `trunk`, the
+repo's default) are refused in both modes, and a prefix can't be one of them or `refs/`.
+
+**GraphQL.** It is allowed only for read-only queries (no `mutation` or `subscription`), and only
+to read review-thread resolution, which GitHub's REST API doesn't expose.
+
+## Approval status
+
+- **What's shown.** For every PDR linked as a pull request, or pending in one: state (draft, open,
+  changes requested, approved, merged, closed), each reviewer's latest decisive review (or
+  "waiting"), and the **unresolved review-comment count**.
+- **Where:**
+  - an **Approval status** panel under Decisions on the product home, with "Review on GitHub";
+  - the board card;
+  - the new **Pull requests** page.
+- **Cost of the count.** It is one GraphQL read, made only when the pull request's `updated_at`
+  changed since the last sync, so unchanged pull requests cost nothing extra.
+  - **Limitation:** resolving a thread may not change `updated_at`. The count catches up on the
+    pull request's next change.
+- **Git-flow merges.** A PDR merged into `develop` stays **pending (merged)** until the file
+  reaches the default branch in a release. It isn't shown as broken in the meantime.
+
+## "My open pull requests"
+
+The **Pull requests** page (sidebar → App) lists every pull request the app opened, across the
+three repos. For each it shows the product, status, reviewers, unresolved comments and age, and
+links to GitHub. Open ones show by default, with merged and closed ones available. It reads through
+the same cached, conditional sync and back-off as the board.
+
+## Verified against the test repos
+
+- **CRM (`pm-crm`):**
+  - **#1** `pmworkbench/crm/acme-corp-20261114` → `main` logged an Acme conversation through the UI;
+  - a second conversation was added to #1 as its second commit.
+- **PDR (`pm-pdr`):**
+  - **#1** `spec/spec-004-spec-004-e2e-retry-limits` → `develop`, raised through the UI after
+    confirming `spec/` → `develop`. (This run produced the doubled number in the name, which has
+    since been fixed.)
+  - A review comment left on it showed as **1 unresolved comment** in the approval panel and on the
+    Pull requests page.
+- **Base branches unchanged:** `pm-crm` `main` `ec80a6f`, `pm-pdr` `main` `16c4df0`, `pm-pdr`
+  `develop` `94a81ee`.
+- **Review states with a second account weren't possible.** GitHub doesn't let you approve your
+  own pull request, so each state (changes requested, approved, re-requested, merged into develop,
+  then released) is covered with the fake GitHub in `test/crm-pdr.test.ts`.

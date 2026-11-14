@@ -212,9 +212,9 @@ describe('sync: board state and link health', () => {
       activity: [{ id: 'commit:c-control-book/checkout-retry-flow.md', at: '2026-10-05T09:00:00Z', type: 'commit' }],
     });
     expect(home.states[byTitle(home, 'SPEC-003 review').id]).toMatchObject({ kind: 'pull', status: 'approved', reviewers: [{ login: 'design', state: 'requested' }, { login: 'payments', state: 'approved' }] });
-    // 3 trees + 3 commit-history reads (one per distinct file) + 1 blob for the conversation + 3 for the PR (PR, reviews, commits).
-    expect(gh.log.length).toBe(10);
-    expect(home.sync).toMatchObject({ requests: 10, notModified: 0, lastSuccessAt: clock.toISOString() });
+    // 3 trees + 3 commit-history reads (one per distinct file) + 1 blob for the conversation + 4 for the PR (PR, reviews, commits, unresolved threads).
+    expect(gh.log.length).toBe(11);
+    expect(home.sync).toMatchObject({ requests: 11, notModified: 0, lastSuccessAt: clock.toISOString() });
     expect(home.sync.lastError).toBeUndefined();
   });
 
@@ -224,7 +224,7 @@ describe('sync: board state and link health', () => {
     await svc.syncProduct(p.id);
     gh.log.length = 0;
     const home = must(await svc.syncProduct(p.id));
-    expect(gh.log.map((r) => r.status)).toEqual([304, 304, 304, 304, 304, 304]); // 3 trees + PR, reviews, commits
+    expect(gh.log.map((r) => r.status)).toEqual([304, 304, 304, 304, 304, 304]); // 3 trees + PR, reviews, commits; the thread count is reused because the PR didn't change
     expect(home.sync).toMatchObject({ requests: 6, notModified: 6 });
     expect(home.links.every((l) => l.health.state === 'ok')).toBe(true);
   });

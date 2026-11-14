@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ROLE_LABEL, type PublicSettings } from '../../../shared/ipc.js';
+import { ROLE_LABEL, type AuthState, type PublicSettings } from '../../../shared/ipc.js';
 import { ARTIFACT_TYPE_LABEL, ARTIFACT_TYPES, describeTarget, groupLinks, STAGE_LABEL, type ArtifactType, type Link, type ProductHome as Home, type WorkflowStage } from '../../../shared/products.js';
 import { syncLine } from '../viewmodel/board.js';
 import { metricsModel } from '../viewmodel/charts.js';
 import { Metrics, MetricStrip } from './Metrics.js';
+import { ApprovalPanel } from './ApprovalPanel.js';
 import { ArtifactWriter } from './ArtifactWriter.js';
+import { ConversationWriter } from './ConversationWriter.js';
+import { PdrWriter } from './PdrWriter.js';
 import { Board } from './Board.js';
 import { LinkPicker } from './LinkPicker.js';
 import { Preview } from './Preview.js';
@@ -14,6 +17,7 @@ import { Sheet } from './Sheet.js';
 interface Props {
   id: string;
   settings: PublicSettings;
+  auth: Extract<AuthState, { status: 'signed-in' }>;
   /** Called after anything that changes the sidebar's product list (rename, delete, links added). */
   onChanged: () => void;
   onDeleted: () => void;
@@ -38,13 +42,13 @@ function Health({ link }: { link: Link }) {
  * board. It renders straight from the local cache, then syncs with GitHub on open and every few
  * minutes, so it opens instantly and still works offline.
  */
-export function ProductHome({ id, settings, onChanged, onDeleted, tab, onTab }: Props) {
+export function ProductHome({ id, settings, auth, onChanged, onDeleted, tab, onTab }: Props) {
   const [home, setHome] = useState<Home>();
   const [error, setError] = useState<string>();
   const [notice, setNotice] = useState<string>();
   const [checking, setChecking] = useState(false);
   const [previewing, setPreviewing] = useState<Link>();
-  const [writer, setWriter] = useState<{ kind: 'create' } | { kind: 'edit'; link: Link }>();
+  const [writer, setWriter] = useState<{ kind: 'create' } | { kind: 'edit'; link: Link } | { kind: 'conversation' } | { kind: 'pdr' }>();
   const [selected, setSelected] = useState<Link>();
   const [sheet, setSheet] = useState<'edit' | 'link' | 'delete' | { relink: Link }>();
 
@@ -142,6 +146,8 @@ export function ProductHome({ id, settings, onChanged, onDeleted, tab, onTab }: 
           <div className="pa">
             <button className="btn" onClick={() => setSheet('edit')}>Edit</button>
             <button className="btn" onClick={() => setWriter({ kind: 'create' })} disabled={!settings.repoRoles.artifacts}>New artifact</button>
+            <button className="btn" onClick={() => setWriter({ kind: 'conversation' })} disabled={!settings.repoRoles.crm}>Log conversation</button>
+            <button className="btn" onClick={() => setWriter({ kind: 'pdr' })} disabled={!settings.repoRoles.pdr}>Raise PDR</button>
             <button className="btn primary" onClick={() => setSheet('link')}>Link items</button>
           </div>
         </div>
@@ -210,6 +216,9 @@ export function ProductHome({ id, settings, onChanged, onDeleted, tab, onTab }: 
               {g.decisions.length === 0 ? <p className="mut small">No decision records linked.</p> : (
                 <ul className="links">{g.decisions.map((l) => <Row key={l.id} link={l} />)}</ul>
               )}
+              {g.decisions.length > 0 && (
+                <ApprovalPanel links={g.decisions} states={home.states} host={auth.host} />
+              )}
             </section>
           </div>
           <aside className="card viewer preview">
@@ -254,7 +263,13 @@ export function ProductHome({ id, settings, onChanged, onDeleted, tab, onTab }: 
         </>
       )}
 
-      {writer && (
+      {writer?.kind === 'conversation' && (
+        <ConversationWriter product={product} onClose={() => setWriter(undefined)} onDone={() => { void load().then(() => void check()); changed.current(); }} />
+      )}
+      {writer?.kind === 'pdr' && (
+        <PdrWriter product={product} auth={auth} onClose={() => setWriter(undefined)} onDone={() => { void load().then(() => void check()); changed.current(); }} />
+      )}
+      {writer && (writer.kind === 'create' || writer.kind === 'edit') && (
         <ArtifactWriter
           mode={writer.kind === 'create' ? { kind: 'create', product, links } : { kind: 'edit', link: writer.link }}
           settings={settings}

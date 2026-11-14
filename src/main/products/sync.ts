@@ -55,7 +55,7 @@ export async function syncLinks(
   links: Link[],
   host: string,
   roles: Partial<Record<RepoRole, RepoRef>>,
-  client: Pick<GitHubClient, 'conditionalGet'>,
+  client: Pick<GitHubClient, 'conditionalGet'> & Partial<Pick<GitHubClient, 'unresolvedThreads'>>,
   cache: HttpCache,
   previous: Record<string, ItemState>,
   now: Date,
@@ -204,13 +204,22 @@ export async function syncLinks(
       (d as RestCommit[]).map((x) => ({ id: `commit:${x.sha}`, at: commitAt(x), type: 'commit' as const })).filter((x) => x.at));
     const reviews = rv.status === 200 ? rv.body : [];
     const { status, reviewers } = pullStatus(pr.body, reviews);
+    // Unresolved review threads need GraphQL, which has no ETags: only ask when the PR changed since
+    // the last sync (or was never counted), and only while it's still open.
+    const prev = previous[l.id];
+    const prevCount = prev && (prev.kind === 'pull' || prev.kind === 'pending') && prev.updatedAt === pr.body.updatedAt ? prev.unresolvedComments : undefined;
+    let unresolvedComments = prevCount;
+    if (unresolvedComments === undefined && client.unresolvedThreads && (status === 'open' || status === 'changes-requested' || status === 'approved' || status === 'draft') && !rateLimited) {
+      requests++;
+      unresolvedComments = await client.unresolvedThreads(repo, n).catch((e) => { if (e instanceof RateLimitedError) rateLimited = e; return undefined; });
+    }
     const activity: ActivityEvent[] = [
       ...(pr.body.createdAt ? [{ id: `pr:${repo.fullName}#${n}:opened`, at: pr.body.createdAt, type: 'opened' as const }] : []),
       ...reviews.filter((r) => r.at).map((r, i) => ({ id: `pr:${repo.fullName}#${n}:review:${i}:${r.at}`, at: r.at, type: 'review' as const })),
       ...(cm.status === 200 ? cm.body : []),
       ...(pr.body.mergedAt ? [{ id: `pr:${repo.fullName}#${n}:merged`, at: pr.body.mergedAt, type: 'merged' as const }] : []),
     ];
-    return { linkId: l.id, health: ok, state: { kind: 'pull', status, title: pr.body.title, updatedAt: pr.body.updatedAt, reviewers, activity } };
+    return { linkId: l.id, health: ok, state: { kind: 'pull', status, title: pr.body.title, updatedAt: pr.body.updatedAt, reviewers, activity, ...(unresolvedComments !== undefined ? { unresolvedComments } : {}) } };
   };
 
   /**
@@ -221,10 +230,17 @@ export async function syncLinks(
     const { prNumber } = l.pending!;
     const pr = await pullItem({ ...l, prNumber }, repo);
     if (!pr.state || pr.state.kind !== 'pull') return { ...pr, health: broken(`Pull request #${prNumber}, which adds this item, no longer exists in ${repo.fullName}.`) };
-    if (pr.state.status === 'merged') return { ...(await fileItem(l, repo)), clearPending: true };
+    if (pr.state.status === 'merged') {
+      // Merged into the default branch, or (git-flow) into develop and since released: a normal link now.
+      const file = await fileItem(l, repo);
+      if (file.state?.kind === 'file' && file.state.exists) return { ...file, clearPending: true };
+      // Merged into an integration branch and not released to the default branch yet: still pending.
+      const { reviewers, updatedAt, activity, unresolvedComments } = pr.state;
+      return { linkId: l.id, health: ok, state: { kind: 'pending', prNumber, status: 'merged', reviewers, updatedAt, ...(activity ? { activity } : {}), ...(unresolvedComments !== undefined ? { unresolvedComments } : {}) } };
+    }
     if (pr.state.status === 'closed') return { linkId: l.id, health: broken(`Pull request #${prNumber}, which adds this item, was closed without merging.`) };
-    const { status, reviewers, updatedAt, activity } = pr.state;
-    return { linkId: l.id, health: ok, state: { kind: 'pending', prNumber, status, reviewers, updatedAt, ...(activity ? { activity } : {}) } };
+    const { status, reviewers, updatedAt, activity, unresolvedComments } = pr.state;
+    return { linkId: l.id, health: ok, state: { kind: 'pending', prNumber, status, reviewers, updatedAt, ...(activity ? { activity } : {}), ...(unresolvedComments !== undefined ? { unresolvedComments } : {}) } };
   };
 
   const one = async (l: Link): Promise<SyncOutcome> => {

@@ -5,7 +5,7 @@
  * exposed on window.pmworkbench.
  */
 import type { MetricSettings } from './metrics.js';
-import type { EditSource, WriteDraft, WritePreview, WriteResult } from './writes.js';
+import type { AppPullStatus, BranchConvention, CrmLayout, EditSource, PdrLayout, WriteDraft, WritePreview, WriteResult } from './writes.js';
 import type { AddLinksResult, ArtifactType, WorkflowStage, FileDialogResult, ImportReport, Link, LinkInput, Product, ProductHome, ProductInput, ProductSummary, PullDetail, PullSummary } from './products.js';
 
 export type RepoRole = 'artifacts' | 'crm' | 'pdr';
@@ -46,6 +46,7 @@ export interface PublicSettings {
   metrics: MetricSettings;
   /** Template file per artifact type in the artifacts repo. */
   templates: Partial<Record<ArtifactType, string>>;
+  branchConventions: Record<string, BranchConvention>;
 }
 
 export interface SettingsPatch {
@@ -55,6 +56,8 @@ export interface SettingsPatch {
   metrics?: MetricSettings;
   /** Set a type's template path, or null to clear it. */
   templates?: Partial<Record<ArtifactType, string | null>>;
+  /** Merged into the stored conventions, by repo full name (lowercase). */
+  branchConventions?: Record<string, BranchConvention>;
 }
 
 export interface TreeEntry {
@@ -121,6 +124,12 @@ export interface PMWorkbenchApi {
   editSource(linkId: string): Promise<Result<EditSource>>;
   /** Opens a page on the configured GitHub host (a pull request, a file) in the default browser. Any other URL is refused. */
   openOnGitHub(url: string): Promise<Result<void>>;
+  /** Where the CRM repo keeps customers and how it titles conversations, read from the repo. */
+  crmLayout(): Promise<Result<CrmLayout>>;
+  /** Where PDRs live, their numbering, any template, and the detected / confirmed branch convention. */
+  pdrLayout(): Promise<Result<PdrLayout>>;
+  /** Every pull request the app opened, with live review state. */
+  listAppPulls(): Promise<Result<AppPullStatus[]>>;
 }
 
 export interface LinkUpdate {
@@ -159,4 +168,7 @@ export const CHANNELS = {
   confirmWrite: 'pmw:confirm-write',
   editSource: 'pmw:edit-source',
   openOnGitHub: 'pmw:open-on-github',
+  crmLayout: 'pmw:crm-layout',
+  pdrLayout: 'pmw:pdr-layout',
+  listAppPulls: 'pmw:list-app-pulls',
 } as const;
