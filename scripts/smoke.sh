@@ -11,12 +11,14 @@ npm run build --silent
 work="$(mktemp -d)"
 mkdir -p "$work/data"
 out="${SMOKE_OUT:-$work/smoke}"
+# xvfb-run provides a display on headless Linux CI; on a Mac the window just opens and closes.
+display=""; command -v xvfb-run >/dev/null 2>&1 && display="xvfb-run -a"
 env -u GITHUB_TOKEN PMWORKBENCH_HOME="$work/data" PMWORKBENCH_SMOKE="$out" \
-  xvfb-run -a ${SMOKE_BIN:-npx electron .} --no-sandbox --disable-gpu 2>&1 | grep SMOKE_RESULT | tee "$work/result.txt"
+  $display ${SMOKE_BIN:-npx electron .} --no-sandbox --disable-gpu 2>&1 | grep SMOKE_RESULT | tee "$work/result.txt"
 echo "screenshot: $out.png"
 node -e '
 const r = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8").replace(/^SMOKE_RESULT /, ""));
-const expectKeys = ["browseTree","getAuth","getSettings","listAvailableRepos","readFile","saveSettings","signIn","signOut"];
+const expectKeys = ["addLinks","browseTree","checkLinks","createProduct","deleteProduct","exportProduct","getAuth","getProduct","getSettings","importProduct","listAvailableRepos","listProducts","listPulls","readFile","readPull","removeLink","saveSettings","signIn","signOut","updateLink","updateProduct"];
 const checks = {
   "no launch error": !r.error,
   "signed out with no token configured": r.authStatus === "signed-out",

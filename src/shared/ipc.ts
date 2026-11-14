@@ -4,6 +4,7 @@
  * bridge (src/preload/index.ts) to a handler registered in src/main/app/ipc.ts. Nothing else is
  * exposed on window.pmworkbench.
  */
+import type { AddLinksResult, ArtifactType, FileDialogResult, ImportReport, Link, LinkInput, Product, ProductHome, ProductInput, ProductSummary, PullDetail, PullSummary } from './products.js';
 
 export type RepoRole = 'artifacts' | 'crm' | 'pdr';
 export const REPO_ROLES: RepoRole[] = ['artifacts', 'crm', 'pdr'];
@@ -57,9 +58,11 @@ export interface FileContent {
   content: string;
   truncated: boolean;
   htmlUrl: string;
+  /** Blob SHA, recorded on links so a moved file can be found again. */
+  sha: string;
 }
 
-export type ErrorCode = 'invalid' | 'not-signed-in' | 'no-role' | 'network' | 'blocked-host';
+export type ErrorCode = 'invalid' | 'not-signed-in' | 'no-role' | 'network' | 'blocked-host' | 'not-found';
 export type Result<T> = { ok: true; value: T } | { ok: false; error: ErrorCode; message: string };
 
 export const ok = <T>(value: T): Result<T> => ({ ok: true, value });
@@ -74,6 +77,34 @@ export interface PMWorkbenchApi {
   saveSettings(patch: SettingsPatch): Promise<Result<PublicSettings>>;
   browseTree(role: RepoRole, path: string): Promise<Result<TreeEntry[]>>;
   readFile(role: RepoRole, path: string): Promise<Result<FileContent>>;
+  listPulls(role: RepoRole): Promise<Result<PullSummary[]>>;
+  readPull(role: RepoRole, number: number): Promise<Result<PullDetail>>;
+
+  listProducts(): Promise<Result<ProductSummary[]>>;
+  getProduct(id: string): Promise<Result<ProductHome>>;
+  createProduct(input: ProductInput): Promise<Result<Product>>;
+  updateProduct(id: string, input: ProductInput): Promise<Result<Product>>;
+  /** Removes the product and its links from this Mac. Nothing in GitHub changes. */
+  deleteProduct(id: string): Promise<Result<void>>;
+  addLinks(productId: string, links: LinkInput[]): Promise<Result<AddLinksResult>>;
+  /** Relink (a new path, section or pull request) or relabel one link. */
+  updateLink(linkId: string, patch: LinkUpdate): Promise<Result<Link>>;
+  removeLink(linkId: string): Promise<Result<void>>;
+  /** Checks every link of a product against GitHub and returns the refreshed product home. */
+  checkLinks(productId: string): Promise<Result<ProductHome>>;
+  /** Asks where to save, then writes the product's mapping file. */
+  exportProduct(id: string): Promise<Result<FileDialogResult<{ path: string }>>>;
+  /** Asks for a mapping file, then imports it as a new product. */
+  importProduct(): Promise<Result<FileDialogResult<ImportReport>>>;
+}
+
+export interface LinkUpdate {
+  path?: string;
+  anchor?: string | null;
+  prNumber?: number | null;
+  title?: string;
+  artifactType?: ArtifactType;
+  blobSha?: string | null;
 }
 
 export const CHANNELS = {
@@ -85,4 +116,17 @@ export const CHANNELS = {
   saveSettings: 'pmw:save-settings',
   browseTree: 'pmw:browse-tree',
   readFile: 'pmw:read-file',
+  listPulls: 'pmw:list-pulls',
+  readPull: 'pmw:read-pull',
+  listProducts: 'pmw:list-products',
+  getProduct: 'pmw:get-product',
+  createProduct: 'pmw:create-product',
+  updateProduct: 'pmw:update-product',
+  deleteProduct: 'pmw:delete-product',
+  addLinks: 'pmw:add-links',
+  updateLink: 'pmw:update-link',
+  removeLink: 'pmw:remove-link',
+  checkLinks: 'pmw:check-links',
+  exportProduct: 'pmw:export-product',
+  importProduct: 'pmw:import-product',
 } as const;

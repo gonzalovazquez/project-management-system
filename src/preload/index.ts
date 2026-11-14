@@ -15,6 +15,19 @@ const api: PMWorkbenchApi = {
   saveSettings: (patch) => ipcRenderer.invoke(CHANNELS.saveSettings, patch),
   browseTree: (role, path) => ipcRenderer.invoke(CHANNELS.browseTree, role, path),
   readFile: (role, path) => ipcRenderer.invoke(CHANNELS.readFile, role, path),
+  listPulls: (role) => ipcRenderer.invoke(CHANNELS.listPulls, role),
+  readPull: (role, number) => ipcRenderer.invoke(CHANNELS.readPull, role, number),
+  listProducts: () => ipcRenderer.invoke(CHANNELS.listProducts),
+  getProduct: (id) => ipcRenderer.invoke(CHANNELS.getProduct, id),
+  createProduct: (input) => ipcRenderer.invoke(CHANNELS.createProduct, input),
+  updateProduct: (id, input) => ipcRenderer.invoke(CHANNELS.updateProduct, id, input),
+  deleteProduct: (id) => ipcRenderer.invoke(CHANNELS.deleteProduct, id),
+  addLinks: (productId, links) => ipcRenderer.invoke(CHANNELS.addLinks, productId, links),
+  updateLink: (linkId, patch) => ipcRenderer.invoke(CHANNELS.updateLink, linkId, patch),
+  removeLink: (linkId) => ipcRenderer.invoke(CHANNELS.removeLink, linkId),
+  checkLinks: (productId) => ipcRenderer.invoke(CHANNELS.checkLinks, productId),
+  exportProduct: (id) => ipcRenderer.invoke(CHANNELS.exportProduct, id),
+  importProduct: () => ipcRenderer.invoke(CHANNELS.importProduct),
 };
 
 contextBridge.exposeInMainWorld('pmworkbench', api);

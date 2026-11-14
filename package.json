@@ -13,6 +13,7 @@
     "prestart": "node scripts/ensure-electron.mjs",
     "start": "electron-vite preview",
     "smoke": "bash scripts/smoke.sh",
+    "seed": "tsx scripts/seed.ts",
     "package": "npm run build && electron-builder --mac",
     "package:dir": "npm run build && electron-builder --dir",
     "icon": "node scripts/make-icon.mjs"

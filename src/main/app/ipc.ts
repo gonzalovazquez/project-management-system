@@ -33,4 +33,18 @@ export function registerIpc(ipc: IpcMain, service: AppService, deps: IpcDeps): v
   handle(CHANNELS.saveSettings, (patch: Parameters<AppService['saveSettings']>[0]) => service.saveSettings(patch));
   handle(CHANNELS.browseTree, (role: Parameters<AppService['browseTree']>[0], path: string) => service.browseTree(role, path));
   handle(CHANNELS.readFile, (role: Parameters<AppService['readFile']>[0], path: string) => service.readFile(role, path));
+  // Product calls take `unknown` arguments on purpose: AppService validates each one before use.
+  handle(CHANNELS.listPulls, (role: unknown) => service.listPulls(role));
+  handle(CHANNELS.readPull, (role: unknown, n: unknown) => service.readPull(role, n));
+  handle(CHANNELS.listProducts, () => service.listProducts());
+  handle(CHANNELS.getProduct, (id: unknown) => service.getProduct(id));
+  handle(CHANNELS.createProduct, (input: unknown) => service.createProduct(input));
+  handle(CHANNELS.updateProduct, (id: unknown, input: unknown) => service.updateProduct(id, input));
+  handle(CHANNELS.deleteProduct, (id: unknown) => service.deleteProduct(id));
+  handle(CHANNELS.addLinks, (id: unknown, links: unknown) => service.addLinks(id, links));
+  handle(CHANNELS.updateLink, (id: unknown, patch: unknown) => service.updateLink(id, patch));
+  handle(CHANNELS.removeLink, (id: unknown) => service.removeLink(id));
+  handle(CHANNELS.checkLinks, (id: unknown) => service.checkLinks(id));
+  handle(CHANNELS.exportProduct, (id: unknown) => service.exportProduct(id));
+  handle(CHANNELS.importProduct, () => service.importProduct());
 }

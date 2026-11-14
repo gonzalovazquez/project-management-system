@@ -1,5 +1,5 @@
-import { app, BrowserWindow, ipcMain, nativeTheme, safeStorage, session } from 'electron';
-import { writeFile } from 'node:fs/promises';
+import { app, BrowserWindow, dialog, ipcMain, nativeTheme, safeStorage, session } from 'electron';
+import { readFile, stat, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { CHANNELS } from '../shared/ipc.js';
@@ -10,6 +10,8 @@ import { createSettingsStore } from './app/settings.js';
 import { isTrustedUrl } from './app/trust.js';
 import { apiHostname } from './github/host.js';
 import { createGitHubClient } from './github/client.js';
+import { openDatabase } from './products/db.js';
+import { ProductStore } from './products/store.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const devUrl = process.env.ELECTRON_RENDERER_URL;
@@ -27,6 +29,27 @@ function createService(): AppService {
       decrypt: (b) => safeStorage.decryptString(b),
     }),
     createClient: (host, token) => createGitHubClient(host, token),
+    // The product mapping: local only, next to settings in the app's data folder.
+    products: new ProductStore(openDatabase(join(data, 'products.db'))),
+    files: {
+      async saveText(suggestedName, text) {
+        const win = BrowserWindow.getFocusedWindow();
+        const opts = { title: 'Export product mapping', defaultPath: join(app.getPath('documents'), suggestedName), filters: [{ name: 'PM Workbench mapping', extensions: ['json'] }] };
+        const r = win ? await dialog.showSaveDialog(win, opts) : await dialog.showSaveDialog(opts);
+        if (r.canceled || !r.filePath) return null;
+        await writeFile(r.filePath, text, 'utf8');
+        return r.filePath;
+      },
+      async openText() {
+        const win = BrowserWindow.getFocusedWindow();
+        const opts = { title: 'Import product mapping', properties: ['openFile' as const], filters: [{ name: 'PM Workbench mapping', extensions: ['json'] }] };
+        const r = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts);
+        const file = r.filePaths[0];
+        if (r.canceled || !file) return null;
+        if ((await stat(file)).size > 5_000_000) throw new Error('That file is over 5 MB, which is far larger than any product mapping.');
+        return readFile(file, 'utf8');
+      },
+    },
   });
 }
 
