@@ -244,6 +244,8 @@ export class WriteEngine {
     if (branch === preview.base || branch === repo.defaultBranch) throw new WriteError('protected', 'Refusing to commit to the base branch.');
 
     let createdBranch = false;
+    let inFlight: string | undefined;
+    await this.recoverInterrupted();
     try {
       // Stale check: the branch we build on hasn't moved in a way that touches our files.
       const onBranch = plan.existing ? branch : repo.defaultBranch;
@@ -263,19 +265,63 @@ export class WriteEngine {
         this.d.products.touchWrite(plan.existing.id, plan.files.map((f) => f.path));
         return { prNumber: plan.existing.prNumber!, prUrl: plan.existing.prUrl ?? '', branch, addedToExisting: true, ...this.applyLink(plan, plan.existing.prNumber!) };
       }
+      if (this.d.products.writes().some((w) => w.repo.toLowerCase() === repo.fullName.toLowerCase() && w.branch === branch)) {
+        throw new WriteError('collision', `A branch named ${branch} already exists in ${repo.fullName}. Preview again to get a fresh name.`);
+      }
+      // Recorded as in flight before the branch exists, so an interruption from here on (quit,
+      // crash, power loss) is finished or cleaned up by recoverInterrupted on the next run.
+      inFlight = this.d.products.recordWrite({
+        productId: plan.productId, role: plan.role, repoHost: this.d.host(), repo: repo.fullName, base: preview.base, branch,
+        title: preview.title, paths: plan.files.map((f) => f.path),
+        ...(plan.link && 'create' in plan.link ? { linkPlan: { ...plan.link.create, pending: { prNumber: 0, branch } } } : {}),
+      }).id;
       await c.createBranch(repo, branch, commit);
       createdBranch = true;
       const pr = await c.openPull(repo, { title: preview.title, body: preview.body, head: branch, base: preview.base });
-      this.d.products.recordWrite({
-        productId: plan.productId, role: plan.role, repoHost: this.d.host(), repo: repo.fullName, base: preview.base, branch,
-        prNumber: pr.number, prUrl: pr.url, title: preview.title, paths: plan.files.map((f) => f.path),
-      });
+      this.d.products.completeWrite(inFlight, pr.number, pr.url);
       return { prNumber: pr.number, prUrl: pr.url, branch, addedToExisting: false, ...this.applyLink(plan, pr.number) };
     } catch (e) {
       // Leave nothing half-made: a branch without its pull request is removed again.
       if (createdBranch) await c.deleteBranch(repo, branch).catch(() => undefined);
+      if (inFlight) this.d.products.deleteWrite(inFlight);
       throw explain(e, repo.fullName, branch);
     }
+  }
+
+  /**
+   * Finishes or cleans up writes interrupted between recording and confirming their pull request:
+   * if GitHub has a pull request for the branch, it is recorded and the item linked as planned;
+   * otherwise the orphan branch (always an app branch) is deleted. Safe to run any time; a write
+   * whose repo can't be reached right now is left for the next run.
+   */
+  async recoverInterrupted(): Promise<{ completed: number; cleaned: number }> {
+    let completed = 0;
+    let cleaned = 0;
+    const roles = await this.d.roles();
+    for (const w of this.d.products.inFlightWrites()) {
+      const repo = Object.values(roles).find((r) => r && r.fullName.toLowerCase() === w.repo.toLowerCase());
+      if (!repo || w.repoHost.toLowerCase() !== this.d.host().toLowerCase()) continue;
+      try {
+        const c = this.d.client();
+        const pr = await c.pullForBranch(repo, w.branch);
+        if (pr) {
+          this.d.products.completeWrite(w.id, pr.number, pr.url);
+          if (w.linkPlan && w.productId) {
+            this.d.products.addLinks(w.productId, [{ ...w.linkPlan, pending: { prNumber: pr.number, branch: w.branch } }]);
+            this.d.products.snapshot(w.productId);
+          }
+          completed++;
+        } else {
+          assertWritableBranch(repo.fullName, w.branch, this.d.guard);
+          if (await c.branchHead(repo, w.branch)) await c.deleteBranch(repo, w.branch);
+          this.d.products.deleteWrite(w.id);
+          cleaned++;
+        }
+      } catch {
+        // Offline or not allowed right now: try again next time.
+      }
+    }
+    return { completed, cleaned };
   }
 
   /** Links a newly created item to its product, pending until the pull request merges. */

@@ -20,6 +20,18 @@ const devUrl = process.env.ELECTRON_RENDERER_URL;
 // A separate data folder keeps tests and experiments away from the real settings and token.
 if (process.env.PMWORKBENCH_HOME) app.setPath('userData', process.env.PMWORKBENCH_HOME);
 
+// Every renderer is sandboxed, whatever its own webPreferences say.
+app.enableSandbox();
+
+// The same rules for every web contents the app ever creates, not just the main window: no new
+// windows, no navigation away from the app's page, no <webview>.
+app.on('web-contents-created', (_e, contents) => {
+  contents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  contents.on('will-navigate', (ev) => ev.preventDefault());
+  contents.on('will-redirect', (ev) => ev.preventDefault());
+  contents.on('will-attach-webview', (ev) => ev.preventDefault());
+});
+
 function createService(): AppService {
   const data = app.getPath('userData');
   const db = openDatabase(join(data, 'products.db'));
@@ -93,7 +105,12 @@ function createWindow(): BrowserWindow {
     width: 1280, height: 840, minWidth: 900, minHeight: 600,
     backgroundColor: nativeTheme.shouldUseDarkColors ? '#1e1e20' : '#ffffff',
     ...(process.platform === 'darwin' ? { titleBarStyle: 'hiddenInset' as const, trafficLightPosition: { x: 16, y: 17 }, vibrancy: 'sidebar' as const, visualEffectState: 'followWindow' as const } : {}),
-    webPreferences: { preload: join(here, '../preload/index.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true },
+    webPreferences: {
+      preload: join(here, '../preload/index.cjs'), contextIsolation: true, nodeIntegration: false, nodeIntegrationInWorker: false, sandbox: true,
+      webSecurity: true, webviewTag: false, allowRunningInsecureContent: false, navigateOnDragDrop: false, spellcheck: false,
+      // Developer tools only when running from source.
+      devTools: !app.isPackaged,
+    },
   });
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   win.webContents.on('will-navigate', (e) => e.preventDefault());
@@ -120,12 +137,26 @@ const trustedUrl = (url: string) => isTrustedUrl(url, { devUrl, indexFileUrl });
 async function runSmokeCheck(win: BrowserWindow, auth: { status: string }, out: string): Promise<void> {
   let result: Record<string, unknown>;
   try {
-    const probe = await win.webContents.executeJavaScript(`({
+    const probe = await win.webContents.executeJavaScript(`(async () => ({
       bridgeKeys: Object.keys(window.pmworkbench ?? {}).sort(),
       nodeLeaked: typeof require !== 'undefined' || typeof process !== 'undefined',
       csp: document.querySelector('meta[http-equiv="Content-Security-Policy"]')?.content ?? null,
-    })`);
-    result = { error: null, authStatus: auth.status, ...probe };
+      externalFetchBlocked: await fetch('https://example.com/').then(() => false, () => true),
+      windowOpenBlocked: window.open('https://example.com/') === null,
+      urlBefore: location.href,
+    }))()`);
+    // Try to navigate away; the window must stay on the app's page.
+    await win.webContents.executeJavaScript(`location.href = 'https://example.com/'; true`).catch(() => undefined);
+    await new Promise((r) => setTimeout(r, 300));
+    // The OS-level view of the renderer process: is it actually sandboxed?
+    const pid = win.webContents.getOSProcessId();
+    const metric = app.getAppMetrics().find((m) => m.pid === pid);
+    result = {
+      error: null, authStatus: auth.status, ...probe,
+      navigationBlocked: win.webContents.getURL() === probe.urlBefore,
+      rendererSandboxed: metric?.sandboxed ?? null,
+      webviewAvailable: await win.webContents.executeJavaScript(`typeof customElements.get('webview') !== 'undefined' || 'WebView' in window`),
+    };
   } catch (e) {
     result = { error: e instanceof Error ? e.message : String(e), authStatus: auth.status, bridgeKeys: [], nodeLeaked: null, csp: null };
   }
@@ -139,6 +170,7 @@ async function runSmokeCheck(win: BrowserWindow, auth: { status: string }, out: 
 void app.whenReady().then(async () => {
   // Deny every permission request; this app has no use for the clipboard, camera, location, etc.
   session.defaultSession.setPermissionRequestHandler((_wc, _perm, cb) => cb(false));
+  session.defaultSession.setPermissionCheckHandler(() => false);
   const service = createService();
   installNetworkGuard(() => {
     const auth = service.getAuth();

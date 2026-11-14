@@ -22,14 +22,17 @@ export function RepoBrowser({ role, settings }: Props) {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
+    // Clear the previous repo's listing at once, so it never shows under this repo's name.
     setPath('');
     setFile(undefined);
+    setEntries(undefined);
   }, [role]);
 
   useEffect(() => {
     if (!repo) return;
     let alive = true;
     setLoading(true);
+    setEntries(undefined);
     setError(undefined);
     void window.pmworkbench.browseTree(role, path).then((r) => {
       if (!alive) return;
