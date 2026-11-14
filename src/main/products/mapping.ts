@@ -1,5 +1,5 @@
 import { REPO_ROLES, type RepoRef, type RepoRole } from '../../shared/ipc.js';
-import { ARTIFACT_TYPES, KINDS_FOR_ROLE, type ArtifactType, type Kpi, type LinkKind, type ProductHome } from '../../shared/products.js';
+import { ARTIFACT_TYPES, isStage, KINDS_FOR_ROLE, type ArtifactType, type Kpi, type LinkKind, type ProductHome, type WorkflowStage } from '../../shared/products.js';
 import type { NewLink } from './store.js';
 
 /**
@@ -20,7 +20,7 @@ export interface MappingLink {
   title: string;
   artifactType?: ArtifactType;
   blobSha?: string;
-  stage?: string;
+  stage?: WorkflowStage;
   stageEnteredAt?: string;
 }
 
@@ -89,6 +89,8 @@ export function parseMapping(text: string): ProductMapping {
     if (l.path === undefined && l.prNumber === undefined) throw bad('needs a path or a pull request number');
     if (l.kind === 'conversation' && (l.anchor === undefined || l.path === undefined)) throw bad('a conversation needs a file and a section');
     if (l.artifactType !== undefined && !ARTIFACT_TYPES.includes(l.artifactType as ArtifactType)) throw bad('artifactType');
+    if (l.stage !== undefined && !isStage(l.stage)) throw bad(`unknown stage "${String(l.stage)}"`);
+    if (l.stageEnteredAt !== undefined && Number.isNaN(Date.parse(l.stageEnteredAt as string))) throw bad('stageEnteredAt');
   });
   return raw as unknown as ProductMapping;
 }

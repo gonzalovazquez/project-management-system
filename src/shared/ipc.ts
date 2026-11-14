@@ -4,7 +4,7 @@
  * bridge (src/preload/index.ts) to a handler registered in src/main/app/ipc.ts. Nothing else is
  * exposed on window.pmworkbench.
  */
-import type { AddLinksResult, ArtifactType, FileDialogResult, ImportReport, Link, LinkInput, Product, ProductHome, ProductInput, ProductSummary, PullDetail, PullSummary } from './products.js';
+import type { AddLinksResult, ArtifactType, WorkflowStage, FileDialogResult, ImportReport, Link, LinkInput, Product, ProductHome, ProductInput, ProductSummary, PullDetail, PullSummary } from './products.js';
 
 export type RepoRole = 'artifacts' | 'crm' | 'pdr';
 export const REPO_ROLES: RepoRole[] = ['artifacts', 'crm', 'pdr'];
@@ -30,7 +30,8 @@ export interface RepoList {
 
 export type AuthState =
   | { status: 'signed-out' }
-  | { status: 'signed-in'; host: string; login: string; tokenSource: 'env' | 'keychain' };
+  /** `offline`: GitHub couldn't be reached at launch to re-check the token; cached data is shown until a sync succeeds. */
+  | { status: 'signed-in'; host: string; login: string; tokenSource: 'env' | 'keychain'; offline?: boolean };
 
 export interface PublicSettings {
   host: string;
@@ -90,8 +91,13 @@ export interface PMWorkbenchApi {
   /** Relink (a new path, section or pull request) or relabel one link. */
   updateLink(linkId: string, patch: LinkUpdate): Promise<Result<Link>>;
   removeLink(linkId: string): Promise<Result<void>>;
-  /** Checks every link of a product against GitHub and returns the refreshed product home. */
-  checkLinks(productId: string): Promise<Result<ProductHome>>;
+  /**
+   * Syncs a product's items with GitHub (link health and board state) and returns the product home.
+   * Offline or rate limited, it still succeeds with the cached state; `sync.lastError` says why.
+   */
+  syncProduct(productId: string): Promise<Result<ProductHome>>;
+  /** Places an item in a workflow stage, or back in the unstaged tray with null. Writes nothing to GitHub. */
+  moveLink(linkId: string, stage: WorkflowStage | null): Promise<Result<Link>>;
   /** Asks where to save, then writes the product's mapping file. */
   exportProduct(id: string): Promise<Result<FileDialogResult<{ path: string }>>>;
   /** Asks for a mapping file, then imports it as a new product. */
@@ -126,7 +132,8 @@ export const CHANNELS = {
   addLinks: 'pmw:add-links',
   updateLink: 'pmw:update-link',
   removeLink: 'pmw:remove-link',
-  checkLinks: 'pmw:check-links',
+  syncProduct: 'pmw:sync-product',
+  moveLink: 'pmw:move-link',
   exportProduct: 'pmw:export-product',
   importProduct: 'pmw:import-product',
 } as const;

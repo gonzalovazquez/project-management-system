@@ -45,15 +45,29 @@ export interface GitHubClient {
   listTree(repo: RepoRef, path: string): Promise<TreeEntry[]>;
   /** One file's decoded text content. Files over 1 MB come back truncated rather than failing. */
   getFile(repo: RepoRef, path: string): Promise<FileContent>;
-  /** A path's current blob SHA on the default branch, or null when nothing is there (404). */
-  statPath(repo: RepoRef, path: string): Promise<{ sha: string; type: 'file' | 'dir' } | null>;
-  /** The path of a file with this blob SHA anywhere on the default branch, or null. One call per repo. */
-  findBlob(repo: RepoRef, sha: string): Promise<string | null>;
+  /**
+   * One GET against the REST API with an optional ETag. A 304 (unchanged, and free against the rate
+   * limit) and a 404 come back as results rather than errors; running out of rate limit throws
+   * RateLimitedError. Used by the board sync through its response cache (src/main/products/sync.ts).
+   */
+  conditionalGet(route: string, params: Record<string, string | number>, etag?: string): Promise<ConditionalResult>;
   /** Pull requests, most recently updated first, open and closed, capped at 100. */
   listPulls(repo: RepoRef): Promise<PullSummary[]>;
   /** One pull request, or null when it doesn't exist (404). */
   getPull(repo: RepoRef, number: number): Promise<PullDetail | null>;
 }
+
+export type ConditionalResult = { status: 200; data: unknown; etag?: string } | { status: 304 } | { status: 404 };
+
+export class RateLimitedError extends Error {
+  constructor(public resetAt?: string) {
+    super(resetAt ? `GitHub's rate limit is used up until ${new Date(resetAt).toLocaleTimeString()}.` : "GitHub's rate limit is used up for now.");
+    this.name = 'RateLimitedError';
+  }
+}
+
+type ErrorShape = { status?: number; response?: { headers?: Record<string, string | number | undefined> } };
+const header = (e: ErrorShape, name: string) => e.response?.headers?.[name];
 
 const isNotFound = (e: unknown) => typeof e === 'object' && e !== null && (e as { status?: number }).status === 404;
 
@@ -127,24 +141,23 @@ export function createGitHubClient(host: string, token: string, fetchImpl: typeo
       return { path, content: bytes.subarray(0, MAX_FILE_BYTES).toString('utf8'), truncated, htmlUrl: data.html_url ?? '', sha: data.sha };
     },
 
-    async statPath(repo, path) {
+    async conditionalGet(route, params, etag) {
+      if (!route.startsWith('GET /')) throw new Error('conditionalGet only sends GET requests.');
       try {
-        const { data } = await octokit.request('GET /repos/{owner}/{repo}/contents/{path}', {
-          owner: repo.owner, repo: repo.name, path: path.replace(/^\/+/, ''), ref: repo.defaultBranch,
-        });
-        if (Array.isArray(data)) return { sha: '', type: 'dir' };
-        return data.type === 'file' ? { sha: data.sha, type: 'file' } : null;
+        const r = await octokit.request(route, { ...params, headers: etag ? { 'if-none-match': etag } : {} });
+        const tag = r.headers.etag;
+        return { status: 200, data: r.data, ...(tag ? { etag: String(tag) } : {}) };
       } catch (e) {
-        if (isNotFound(e)) return null;
+        const err = e as ErrorShape;
+        if (err.status === 304) return { status: 304 };
+        // 409 is GitHub's answer for the tree of an empty repo: nothing there, same as a 404 for our purposes.
+        if (err.status === 404 || err.status === 409) return { status: 404 };
+        if (err.status === 429 || (err.status === 403 && String(header(err, 'x-ratelimit-remaining')) === '0')) {
+          const reset = Number(header(err, 'x-ratelimit-reset'));
+          throw new RateLimitedError(Number.isFinite(reset) && reset > 0 ? new Date(reset * 1000).toISOString() : undefined);
+        }
         throw e;
       }
-    },
-
-    async findBlob(repo, sha) {
-      const { data } = await octokit.request('GET /repos/{owner}/{repo}/git/trees/{tree_sha}', {
-        owner: repo.owner, repo: repo.name, tree_sha: repo.defaultBranch, recursive: '1',
-      });
-      return data.tree.find((e) => e.type === 'blob' && e.sha === sha)?.path ?? null;
     },
 
     async listPulls(repo) {

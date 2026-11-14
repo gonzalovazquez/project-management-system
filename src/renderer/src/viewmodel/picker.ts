@@ -1,5 +1,5 @@
 import type { RepoRole, TreeEntry } from '../../../shared/ipc.js';
-import { suggestArtifactType, type ArtifactType, type LinkInput, type PullSummary, type Section } from '../../../shared/products.js';
+import { suggestArtifactType, suggestStage, type ArtifactType, type LinkInput, type PullSummary, type Section, type WorkflowStage } from '../../../shared/products.js';
 
 /**
  * The link picker's selection: what the PM has ticked across the three repos, keyed so the same
@@ -12,19 +12,32 @@ export const keyOf = (l: Pick<LinkInput, 'role' | 'kind' | 'path' | 'anchor' | '
 
 const titleFromPath = (path: string) => path.split('/').pop()!.replace(/\.(md|markdown|txt)$/i, '');
 
+/** Pre-fills the suggested stage, which the PM can change before linking (or clear to leave it unstaged). */
+const withStage = (l: LinkInput): LinkInput => {
+  const stage = suggestStage(l);
+  return stage ? { ...l, stage } : l;
+};
+
 /** The link a ticked file becomes, by role: an artifact (with a suggested type), a customer, or a decision record. */
 export function fileToLink(role: RepoRole, entry: Pick<TreeEntry, 'path' | 'sha'>): LinkInput {
   const base = { role, path: entry.path, title: titleFromPath(entry.path), blobSha: entry.sha || undefined };
-  if (role === 'artifacts') return { ...base, kind: 'artifact', artifactType: suggestArtifactType(entry.path) };
-  if (role === 'crm') return { ...base, kind: 'customer' };
-  return { ...base, kind: 'decision' };
+  if (role === 'artifacts') return withStage({ ...base, kind: 'artifact', artifactType: suggestArtifactType(entry.path) });
+  if (role === 'crm') return withStage({ ...base, kind: 'customer' });
+  return withStage({ ...base, kind: 'decision' });
 }
 
 export const sectionToLink = (path: string, sha: string, s: Section): LinkInput =>
-  ({ role: 'crm', kind: 'conversation', path, anchor: s.anchor, title: s.heading, blobSha: sha || undefined });
+  withStage({ role: 'crm', kind: 'conversation', path, anchor: s.anchor, title: s.heading, blobSha: sha || undefined });
 
 export const pullToLink = (p: PullSummary): LinkInput =>
-  ({ role: 'pdr', kind: 'decision', prNumber: p.number, title: `#${p.number} ${p.title}` });
+  withStage({ role: 'pdr', kind: 'decision', prNumber: p.number, title: `#${p.number} ${p.title}` });
+
+export function setStage(sel: Selection, key: string, stage: WorkflowStage | undefined): Selection {
+  const cur = sel.get(key);
+  if (!cur) return sel;
+  const { stage: _old, ...rest } = cur;
+  return new Map(sel).set(key, stage ? { ...rest, stage } : rest);
+}
 
 export function toggle(sel: Selection, link: LinkInput): Selection {
   const next = new Map(sel);
@@ -36,7 +49,14 @@ export function toggle(sel: Selection, link: LinkInput): Selection {
 export function setType(sel: Selection, key: string, artifactType: ArtifactType): Selection {
   const cur = sel.get(key);
   if (!cur || cur.kind !== 'artifact') return sel;
-  return new Map(sel).set(key, { ...cur, artifactType });
+  // A stage the PM hasn't touched follows the new type's suggestion.
+  const followed = cur.stage === suggestStage(cur);
+  const next: LinkInput = { ...cur, artifactType };
+  if (followed) {
+    const s = suggestStage(next);
+    if (s) next.stage = s; else delete next.stage;
+  }
+  return new Map(sel).set(key, next);
 }
 
 /** Leaves out anything the product already links, so the picker can show those as already linked. */

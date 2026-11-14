@@ -7,6 +7,7 @@ import { AppService, type ServiceDeps } from '../src/main/app/service.js';
 import { createSettingsStore } from '../src/main/app/settings.js';
 import { openDatabase } from '../src/main/products/db.js';
 import { ProductStore } from '../src/main/products/store.js';
+import { HttpCache } from '../src/main/products/httpcache.js';
 import { tmp } from './helpers.js';
 
 const repo = (name: string): RepoRef => ({ owner: 'gonzalovazquez', name, fullName: `gonzalovazquez/${name}`, defaultBranch: 'main', private: true, htmlUrl: `https://github.com/gonzalovazquez/${name}` });
@@ -35,6 +36,7 @@ function setup(env: Record<string, string | undefined> = {}): Setup {
     tokens: new TokenStore(join(dir, 'token.bin'), fakeBox(), env),
     createClient,
     products: new ProductStore(openDatabase(':memory:')),
+    cache: new HttpCache(openDatabase(':memory:')),
     files: { saveText: async () => null, openText: async () => null },
   };
   return { deps, clients, createClient };
@@ -90,6 +92,24 @@ describe('AppService', () => {
     const svc = new AppService(env.deps);
     await svc.init();
     expect(svc.getAuth()).toEqual({ status: 'signed-in', host: 'github.com', login: 'gonzo', tokenSource: 'env' });
+  });
+
+  it('init stays signed in, marked offline, when GitHub cannot be reached at launch', async () => {
+    s.clients['github.com:ghp_good'] = { whoAmI: async () => ({ login: 'gonzo' }) };
+    await new AppService(s.deps).signIn('github.com', 'ghp_good');
+    s.clients['github.com:ghp_good'] = { whoAmI: async () => { throw new TypeError('fetch failed'); } };
+    const svc = new AppService(s.deps);
+    await svc.init();
+    expect(svc.getAuth()).toEqual({ status: 'signed-in', host: 'github.com', login: 'gonzo', tokenSource: 'keychain', offline: true });
+  });
+
+  it('init still signs out when GitHub rejects the stored token, even with a remembered login', async () => {
+    s.clients['github.com:ghp_good'] = { whoAmI: async () => ({ login: 'gonzo' }) };
+    await new AppService(s.deps).signIn('github.com', 'ghp_good');
+    s.clients['github.com:ghp_good'] = { whoAmI: async () => { throw Object.assign(new Error('Bad credentials'), { status: 401 }); } };
+    const svc = new AppService(s.deps);
+    await svc.init();
+    expect(svc.getAuth()).toEqual({ status: 'signed-out' });
   });
 
   it('init falls back to signed-out when the stored token no longer works', async () => {

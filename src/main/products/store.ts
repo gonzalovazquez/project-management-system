@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 import type { RepoRole } from '../../shared/ipc.js';
-import type { ArtifactType, Kpi, Link, LinkHealth, LinkKind, Product, ProductHome, ProductInput, ProductSummary } from '../../shared/products.js';
+import { isStage, type ArtifactType, type ItemState, type Kpi, type Link, type LinkHealth, type LinkKind, type Product, type ProductHome, type ProductInput, type ProductSummary, type SyncStatus, type WorkflowStage } from '../../shared/products.js';
 
 /** A link ready to store: the repo already resolved from its role. */
 export interface NewLink {
@@ -15,8 +15,15 @@ export interface NewLink {
   title: string;
   artifactType?: ArtifactType;
   blobSha?: string;
-  stage?: string;
+  stage?: WorkflowStage;
   stageEnteredAt?: string;
+}
+
+export interface StageEvent {
+  linkId: string;
+  from?: WorkflowStage;
+  to?: WorkflowStage;
+  at: string;
 }
 
 export interface LinkPatch {
@@ -51,7 +58,7 @@ function toLink(r: LinkRow): Link {
   if (r.pr_number !== null) l.prNumber = Number(r.pr_number);
   if (r.artifact_type !== null) l.artifactType = r.artifact_type;
   if (r.blob_sha !== null) l.blobSha = r.blob_sha;
-  if (r.stage !== null) l.stage = r.stage;
+  if (r.stage !== null && isStage(r.stage)) l.stage = r.stage;
   if (r.stage_entered_at !== null) l.stageEnteredAt = r.stage_entered_at;
   return l;
 }
@@ -97,7 +104,72 @@ export class ProductStore {
   home(id: string): ProductHome | undefined {
     const product = this.getProduct(id);
     if (!product) return undefined;
-    return { product, links: this.links(id) };
+    return { product, links: this.links(id), states: this.states(id), sync: this.syncStatus(id) };
+  }
+
+  states(productId: string): Record<string, ItemState> {
+    const rows = this.db.prepare('SELECT s.link_id, s.state FROM item_state s JOIN links l ON l.id = s.link_id WHERE l.product_id = ?').all(productId) as { link_id: string; state: string }[];
+    return Object.fromEntries(rows.map((r) => [r.link_id, JSON.parse(r.state) as ItemState]));
+  }
+
+  setItemState(linkId: string, state: ItemState): void {
+    this.db.prepare(`
+      INSERT INTO item_state (link_id, state, synced_at) VALUES (?, ?, ?)
+      ON CONFLICT (link_id) DO UPDATE SET state = excluded.state, synced_at = excluded.synced_at
+    `).run(linkId, JSON.stringify(state), this.now().toISOString());
+  }
+
+  syncStatus(productId: string): SyncStatus {
+    const r = this.db.prepare('SELECT * FROM sync_status WHERE product_id = ?').get(productId) as
+      | { last_success_at: string | null; last_attempt_at: string | null; last_error: string | null; requests: number | null; not_modified: number | null } | undefined;
+    if (!r) return {};
+    const s: SyncStatus = {};
+    if (r.last_success_at) s.lastSuccessAt = r.last_success_at;
+    if (r.last_attempt_at) s.lastAttemptAt = r.last_attempt_at;
+    if (r.last_error) s.lastError = r.last_error;
+    if (r.requests !== null) s.requests = Number(r.requests);
+    if (r.not_modified !== null) s.notModified = Number(r.not_modified);
+    return s;
+  }
+
+  /** Records a sync attempt. A failed attempt keeps the last success time, so the board can say how old its data is. */
+  recordSync(productId: string, r: { ok: boolean; error?: string; requests: number; notModified: number }): void {
+    const at = this.now().toISOString();
+    this.db.prepare(`
+      INSERT INTO sync_status (product_id, last_success_at, last_attempt_at, last_error, requests, not_modified) VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT (product_id) DO UPDATE SET
+        last_success_at = coalesce(excluded.last_success_at, sync_status.last_success_at),
+        last_attempt_at = excluded.last_attempt_at, last_error = excluded.last_error,
+        requests = excluded.requests, not_modified = excluded.not_modified
+    `).run(productId, r.ok ? at : null, at, r.error ?? null, r.requests, r.notModified);
+  }
+
+  /**
+   * Places an item in a stage (or back in the unstaged tray with null). The entered-at date only
+   * changes when the stage does, and every change is recorded for Phase 3b's metrics.
+   */
+  moveLink(id: string, stage: WorkflowStage | null): Link | undefined {
+    const cur = this.getLink(id);
+    if (!cur) return undefined;
+    if ((cur.stage ?? null) === stage) return cur;
+    const at = this.now().toISOString();
+    this.tx(() => {
+      this.db.prepare('UPDATE links SET stage = ?, stage_entered_at = ? WHERE id = ?').run(stage, stage ? at : null, id);
+      this.db.prepare('INSERT INTO stage_events (link_id, product_id, from_stage, to_stage, at) VALUES (?, ?, ?, ?, ?)').run(id, cur.productId, cur.stage ?? null, stage, at);
+      this.touch(cur.productId);
+    });
+    return this.getLink(id);
+  }
+
+  stageEvents(productId: string): StageEvent[] {
+    const rows = this.db.prepare('SELECT link_id, from_stage, to_stage, at FROM stage_events WHERE product_id = ? ORDER BY at, id').all(productId) as
+      { link_id: string; from_stage: string | null; to_stage: string | null; at: string }[];
+    return rows.map((r) => {
+      const e: StageEvent = { linkId: r.link_id, at: r.at };
+      if (isStage(r.from_stage)) e.from = r.from_stage;
+      if (isStage(r.to_stage)) e.to = r.to_stage;
+      return e;
+    });
   }
 
   links(productId: string): Link[] {
@@ -151,12 +223,16 @@ export class ProductStore {
     return this.tx(() => {
       let added = 0;
       const at = this.now().toISOString();
+      const ev = this.db.prepare('INSERT INTO stage_events (link_id, product_id, from_stage, to_stage, at) VALUES (?, ?, NULL, ?, ?)');
       for (const l of links) {
+        const id = randomUUID();
+        const stageAt = l.stage ? l.stageEnteredAt ?? at : null;
         const r = ins.run(
-          randomUUID(), productId, l.role, l.kind, l.repoHost, l.repoFullName, l.path ?? null, l.anchor ?? null, l.prNumber ?? null,
-          l.title, l.artifactType ?? null, l.blobSha ?? null, l.stage ?? null, l.stageEnteredAt ?? null, at,
+          id, productId, l.role, l.kind, l.repoHost, l.repoFullName, l.path ?? null, l.anchor ?? null, l.prNumber ?? null,
+          l.title, l.artifactType ?? null, l.blobSha ?? null, l.stage ?? null, stageAt, at,
         );
         added += Number(r.changes);
+        if (Number(r.changes) && l.stage) ev.run(id, productId, l.stage, stageAt);
       }
       if (added) this.touch(productId);
       return { added, duplicates: links.length - added };

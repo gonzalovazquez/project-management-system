@@ -25,7 +25,8 @@ const api: PMWorkbenchApi = {
   addLinks: (productId, links) => ipcRenderer.invoke(CHANNELS.addLinks, productId, links),
   updateLink: (linkId, patch) => ipcRenderer.invoke(CHANNELS.updateLink, linkId, patch),
   removeLink: (linkId) => ipcRenderer.invoke(CHANNELS.removeLink, linkId),
-  checkLinks: (productId) => ipcRenderer.invoke(CHANNELS.checkLinks, productId),
+  syncProduct: (productId) => ipcRenderer.invoke(CHANNELS.syncProduct, productId),
+  moveLink: (linkId, stage) => ipcRenderer.invoke(CHANNELS.moveLink, linkId, stage),
   exportProduct: (id) => ipcRenderer.invoke(CHANNELS.exportProduct, id),
   importProduct: () => ipcRenderer.invoke(CHANNELS.importProduct),
 };

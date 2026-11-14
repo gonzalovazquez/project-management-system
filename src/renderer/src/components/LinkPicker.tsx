@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { REPO_ROLES, ROLE_LABEL, type LinkUpdate, type PublicSettings, type RepoRole, type TreeEntry } from '../../../shared/ipc.js';
-import { ARTIFACT_TYPE_LABEL, ARTIFACT_TYPES, markdownSections, type ArtifactType, type Link, type PullSummary, type Section } from '../../../shared/products.js';
-import { fileToLink, keyOf, linkable, pullToLink, sectionToLink, setType, toggle, type Selection } from '../viewmodel/picker.js';
+import { ARTIFACT_TYPE_LABEL, ARTIFACT_TYPES, markdownSections, STAGE_LABEL, STAGES, type WorkflowStage, type ArtifactType, type Link, type PullSummary, type Section } from '../../../shared/products.js';
+import { fileToLink, keyOf, linkable, pullToLink, sectionToLink, setStage, setType, toggle, type Selection } from '../viewmodel/picker.js';
 import { Icon } from './Icon.js';
 import { Sheet } from './Sheet.js';
 
@@ -232,11 +232,17 @@ export function LinkPicker({ settings, existing, mode, onClose, onPick }: Props)
                       <b>{l.title}</b>
                       <span className="mut small">{ROLE_LABEL[l.role]} · {l.kind}{l.prNumber ? '' : ` · ${l.path}`}</span>
                     </div>
-                    {l.kind === 'artifact' && (
-                      <select aria-label={`Type of ${l.title}`} value={l.artifactType} onChange={(e) => setSelection(setType(selection, k, e.target.value as ArtifactType))}>
-                        {ARTIFACT_TYPES.map((t) => <option key={t} value={t}>{ARTIFACT_TYPE_LABEL[t]}</option>)}
+                    <div className="picked-fields">
+                      {l.kind === 'artifact' && (
+                        <select aria-label={`Type of ${l.title}`} value={l.artifactType} onChange={(e) => setSelection(setType(selection, k, e.target.value as ArtifactType))}>
+                          {ARTIFACT_TYPES.map((t) => <option key={t} value={t}>{ARTIFACT_TYPE_LABEL[t]}</option>)}
+                        </select>
+                      )}
+                      <select aria-label={`Stage of ${l.title}`} value={l.stage ?? ''} onChange={(e) => setSelection(setStage(selection, k, (e.target.value || undefined) as WorkflowStage | undefined))}>
+                        <option value="">Unstaged</option>
+                        {STAGES.map((st, i) => <option key={st} value={st}>{i + 1}. {STAGE_LABEL[st]}</option>)}
                       </select>
-                    )}
+                    </div>
                     <button className="btn icon" aria-label={`Unselect ${l.title}`} onClick={() => setSelection(toggle(selection, l))}>×</button>
                   </li>
                 );

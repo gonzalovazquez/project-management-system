@@ -1,5 +1,5 @@
 import { REPO_ROLES, type RepoRole } from '../../shared/ipc.js';
-import { ARTIFACT_TYPES, KINDS_FOR_ROLE, type ArtifactType, type LinkInput, type LinkKind, type ProductInput } from '../../shared/products.js';
+import { ARTIFACT_TYPES, isStage, KINDS_FOR_ROLE, type ArtifactType, type LinkInput, type LinkKind, type ProductInput } from '../../shared/products.js';
 import type { LinkPatch } from './store.js';
 
 /**
@@ -55,6 +55,7 @@ export function validateLinkInput(v: unknown): V<LinkInput> {
   if (v.prNumber !== undefined) { if (!isPrNumber(v.prNumber)) return bad('That pull request number is not valid.'); out.prNumber = v.prNumber; }
   if (v.blobSha !== undefined) { if (typeof v.blobSha !== 'string' || !/^[0-9a-f]{40,64}$/.test(v.blobSha)) return bad('Bad file reference.'); out.blobSha = v.blobSha; }
   if (v.artifactType !== undefined) { if (!ARTIFACT_TYPES.includes(v.artifactType as ArtifactType)) return bad('Unknown artifact type.'); out.artifactType = v.artifactType as ArtifactType; }
+  if (v.stage !== undefined) { if (!isStage(v.stage)) return bad('Unknown stage.'); out.stage = v.stage; }
 
   if (out.path === undefined && out.prNumber === undefined) return bad('A link needs a file or a pull request.');
   if (out.path !== undefined && out.prNumber !== undefined) return bad('A link points at a file or a pull request, not both.');
