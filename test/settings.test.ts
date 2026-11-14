@@ -28,7 +28,7 @@ describe('validatePatch', () => {
     expect(validatePatch({ repoRoles: { pdr: { name: 'x' } as never } })).toMatch(/missing required fields/);
   });
   it('rejects an invalid appearance', () => {
-    expect(validatePatch({ appearance: 'matrix' as never })).toMatch(/system, light or dark/);
+    expect(validatePatch({ appearance: 'neon' as never })).toMatch(/system, light or dark/);
   });
   it('rejects a non-boolean onboarded', () => {
     expect(validatePatch({ onboarded: 'yes' as never })).toMatch(/true or false/);

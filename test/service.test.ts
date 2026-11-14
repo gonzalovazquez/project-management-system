@@ -105,7 +105,7 @@ describe('AppService', () => {
     expect((await svc.saveSettings({ onboarded: true })).ok).toBe(true); // unrelated change: not re-applied
     expect((await svc.saveSettings({ appearance: 'system' })).ok).toBe(true);
     expect(applied).toEqual(['dark', 'light', 'system']);
-    expect((await svc.saveSettings({ appearance: 'matrix' as never })).ok).toBe(false);
+    expect((await svc.saveSettings({ appearance: 'neon' as never })).ok).toBe(false);
     expect(applied).toEqual(['dark', 'light', 'system']);
   });
 
