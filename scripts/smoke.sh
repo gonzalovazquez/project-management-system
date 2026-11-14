@@ -26,6 +26,11 @@ const checks = {
   "Node is not reachable from the page": r.nodeLeaked === false,
   "strict script policy": typeof r.csp === "string" && r.csp.includes("script-src '"'"'self'"'"';") && !/script-src[^;]*unsafe/.test(r.csp),
   "renderer has no connect-src escape hatch": typeof r.csp === "string" && r.csp.includes("connect-src '"'"'self'"'"';"),
+  "renderer cannot reach any other host": r.externalFetchBlocked === true,
+  "new windows are refused": r.windowOpenBlocked === true,
+  "navigation away from the app is refused": r.navigationBlocked === true,
+  "renderer process is OS-sandboxed": r.rendererSandboxed === true,
+  "no <webview> tag": r.webviewAvailable === false,
 };
 let bad = 0;
 for (const [k, v] of Object.entries(checks)) { console.log((v ? "PASS " : "FAIL ") + k); if (!v) bad++; }

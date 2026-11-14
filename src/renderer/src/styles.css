@@ -328,3 +328,9 @@ svg.heat rect { cursor: default; }
 .diff span[data-t="hunk"] { color: var(--label2); background: color-mix(in srgb, var(--blue) 8%, transparent); }
 .pr-body { margin: 6px 0 0; white-space: pre-wrap; background: var(--fill); border-radius: 6px; padding: 8px; }
 .tpl-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; }
+
+/* ---------- Onboarding (Phase 5) ---------- */
+.onboarding { max-width: 620px; }
+.onboarding .tpl-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.scopes summary { cursor: default; font-size: 12.5px; font-weight: 500; }
+.scopes ul { margin: 6px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }

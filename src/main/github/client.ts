@@ -70,6 +70,8 @@ export interface GitHubClient {
   moveBranch(repo: RepoRef, branch: string, sha: string): Promise<void>;
   deleteBranch(repo: RepoRef, branch: string): Promise<void>;
   openPull(repo: RepoRef, p: { title: string; body: string; head: string; base: string }): Promise<{ number: number; url: string }>;
+  /** A pull request (any state) whose head is this branch of the same repo, if one exists. */
+  pullForBranch(repo: RepoRef, branch: string): Promise<{ number: number; url: string } | null>;
 }
 
 export type ConditionalResult = { status: 200; data: unknown; etag?: string } | { status: 304 } | { status: 404 };
@@ -103,11 +105,36 @@ function toRepoRef(r: { owner: { login: string }; name: string; full_name: strin
  * allow-list so nothing but the configured host is ever reached. See
  * docs/decisions/github-access.md for why this is the API rather than a local clone.
  */
-export function createGitHubClient(host: string, token: string, fetchImpl: typeof fetch = fetch, writeGuard: WriteGuardOptions = { defaultBranches: () => ({}) }): GitHubClient {
+/** What the app wants to hear about every response, whichever call made it. */
+export interface ClientHooks {
+  /** GitHub answered 401: the token expired or was revoked. */
+  onUnauthorized?: () => void;
+  /** GitHub answered with a primary or secondary rate limit; `until` is when to try again. */
+  onRateLimited?: (until: Date) => void;
+}
+
+/** Watches responses for a dead token or a rate limit, so the app can react however the call was made. */
+export function observeResponses(hooks: ClientHooks, baseFetch: typeof fetch, now: () => Date = () => new Date()): typeof fetch {
+  return (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const res = await baseFetch(input, init);
+    if (res.status === 401) hooks.onUnauthorized?.();
+    if (res.status === 429 || res.status === 403) {
+      const remaining = res.headers.get('x-ratelimit-remaining');
+      const retryAfter = Number(res.headers.get('retry-after'));
+      const reset = Number(res.headers.get('x-ratelimit-reset'));
+      if (remaining === '0' && reset > 0) hooks.onRateLimited?.(new Date(reset * 1000));
+      else if (retryAfter > 0) hooks.onRateLimited?.(new Date(now().getTime() + retryAfter * 1000)); // secondary limit
+      else if (res.status === 429) hooks.onRateLimited?.(new Date(now().getTime() + 60_000));
+    }
+    return res;
+  }) as typeof fetch;
+}
+
+export function createGitHubClient(host: string, token: string, fetchImpl: typeof fetch = fetch, writeGuard: WriteGuardOptions = { defaultBranches: () => ({}) }, hooks: ClientHooks = {}): GitHubClient {
   const baseUrl = apiBaseUrl(host);
   const allowedHostname = new URL(baseUrl).hostname;
   // Write guard first, then the host allow-list: a write must pass both before anything is sent.
-  const guarded = createWriteGuard(writeGuard, createGuardedFetch(() => allowedHostname, fetchImpl));
+  const guarded = createWriteGuard(writeGuard, createGuardedFetch(() => allowedHostname, observeResponses(hooks, fetchImpl)));
   const octokit = new Octokit({ auth: token, baseUrl, request: { fetch: guarded } });
 
   return {
@@ -241,6 +268,11 @@ export function createGitHubClient(host: string, token: string, fetchImpl: typeo
     async openPull(repo, p) {
       const { data } = await octokit.request('POST /repos/{owner}/{repo}/pulls', { owner: repo.owner, repo: repo.name, title: p.title, body: p.body, head: p.head, base: p.base });
       return { number: data.number, url: data.html_url };
+    },
+
+    async pullForBranch(repo, branch) {
+      const { data } = await octokit.request('GET /repos/{owner}/{repo}/pulls', { owner: repo.owner, repo: repo.name, head: `${repo.owner}:${branch}`, state: 'all', per_page: 1 });
+      return data[0] ? { number: data[0].number, url: data[0].html_url } : null;
     },
   };
 }

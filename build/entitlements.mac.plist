@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  The minimum entitlements for an Electron app under the hardened runtime. allow-jit is required by
+  V8's JIT. Nothing else is granted: no unsigned executable memory, no library-validation opt-out,
+  no camera, microphone, location, contacts, Apple events or file-access exceptions. The app is not
+  in the App Sandbox (it is distributed outside the Mac App Store), so no network entitlement applies.
+-->
+<plist version="1.0">
+<dict>
+  <key>com.apple.security.cs.allow-jit</key>
+  <true/>
+</dict>
+</plist>

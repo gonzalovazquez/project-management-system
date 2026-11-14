@@ -14,9 +14,10 @@
     "start": "electron-vite preview",
     "smoke": "bash scripts/smoke.sh",
     "seed": "tsx scripts/seed.ts",
-    "package": "npm run build && electron-builder --mac",
+    "package": "npm run build && node scripts/package.mjs",
     "package:dir": "npm run build && electron-builder --dir",
-    "icon": "node scripts/make-icon.mjs"
+    "icon": "node scripts/make-icon.mjs",
+    "licenses": "node scripts/licenses.mjs > docs/security/dependencies.md"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
@@ -54,27 +55,52 @@
     ],
     "mac": {
       "category": "public.app-category.productivity",
-      "identity": null,
-      "hardenedRuntime": false,
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "notarize": false,
       "target": [
         {
           "target": "dmg",
           "arch": [
-            "arm64",
-            "x64"
+            "universal"
           ]
         },
         {
           "target": "zip",
           "arch": [
-            "arm64",
-            "x64"
+            "universal"
           ]
         }
       ]
     },
     "linux": {
       "target": "dir"
-    }
+    },
+    "electronFuses": {
+      "runAsNode": false,
+      "enableCookieEncryption": true,
+      "enableNodeOptionsEnvironmentVariable": false,
+      "enableNodeCliInspectArguments": false,
+      "enableEmbeddedAsarIntegrityValidation": true,
+      "onlyLoadAppFromAsar": true,
+      "resetAdHocDarwinSignature": true
+    },
+    "publish": null,
+    "extraResources": [
+      {
+        "from": "node_modules/electron/dist/LICENSE",
+        "to": "licenses/electron-LICENSE"
+      },
+      {
+        "from": "node_modules/electron/dist/LICENSES.chromium.html",
+        "to": "licenses/LICENSES.chromium.html"
+      },
+      {
+        "from": "docs/security/dependencies.md",
+        "to": "licenses/dependencies.md"
+      }
+    ]
   }
 }

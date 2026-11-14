@@ -325,14 +325,31 @@ export class ProductStore {
 
   // ------------------------------------------------------------------ branches and PRs the app opened
 
-  recordWrite(w: Omit<AppPull, 'id' | 'createdAt' | 'updatedAt'> & { repoHost: string }): AppPull {
+  /** Records a write. Without a PR number it is "in flight": its branch may exist but its pull request isn't confirmed yet. */
+  recordWrite(w: Omit<AppPull, 'id' | 'createdAt' | 'updatedAt'> & { repoHost: string; linkPlan?: NewLink }): AppPull {
     const id = randomUUID();
     const at = this.now().toISOString();
     this.db.prepare(`
-      INSERT INTO writes (id, product_id, role, repo_host, repo_full_name, base, branch, pr_number, pr_url, title, paths, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(id, w.productId ?? null, w.role, w.repoHost, w.repo, w.base, w.branch, w.prNumber ?? null, w.prUrl ?? null, w.title, JSON.stringify(w.paths), at, at);
+      INSERT INTO writes (id, product_id, role, repo_host, repo_full_name, base, branch, pr_number, pr_url, title, paths, created_at, updated_at, link_plan)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(id, w.productId ?? null, w.role, w.repoHost, w.repo, w.base, w.branch, w.prNumber ?? null, w.prUrl ?? null, w.title, JSON.stringify(w.paths), at, at, w.linkPlan ? JSON.stringify(w.linkPlan) : null);
     return this.writes().find((x) => x.id === id)!;
+  }
+
+  /** The pull request for an in-flight write was opened. */
+  completeWrite(id: string, prNumber: number, prUrl: string): void {
+    this.db.prepare('UPDATE writes SET pr_number = ?, pr_url = ?, link_plan = NULL, updated_at = ? WHERE id = ?').run(prNumber, prUrl, this.now().toISOString(), id);
+  }
+
+  deleteWrite(id: string): void {
+    this.db.prepare('DELETE FROM writes WHERE id = ?').run(id);
+  }
+
+  /** Writes recorded before their pull request was confirmed, with the link each meant to add. */
+  inFlightWrites(): (AppPull & { repoHost: string; linkPlan?: NewLink })[] {
+    const rows = this.db.prepare('SELECT id, repo_host, link_plan FROM writes WHERE pr_number IS NULL').all() as { id: string; repo_host: string; link_plan: string | null }[];
+    const all = new Map(this.writes().map((w) => [w.id, w]));
+    return rows.map((r) => ({ ...all.get(r.id)!, repoHost: r.repo_host, ...(r.link_plan ? { linkPlan: JSON.parse(r.link_plan) as NewLink } : {}) }));
   }
 
   /** Adds paths to a write after another commit went onto its branch. */

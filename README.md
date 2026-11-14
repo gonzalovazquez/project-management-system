@@ -34,25 +34,24 @@ ever committed to a default branch. See [`docs/decisions/write-back.md`](docs/de
 
 ## Install
 
-There is no signed release. Build it yourself on the Mac you will use it on:
+Build it on a Mac (see [`docs/release.md`](docs/release.md) for signing and notarization):
 
 ```
 git clone https://github.com/gonzalovazquez/project-management-system.git
 cd project-management-system
 npm install
-npm run package        # writes release/PM Workbench-<version>-arm64.dmg (and x64, and zips)
+npm run package        # release/PM Workbench-<version>-universal.dmg and .zip (Apple silicon + Intel)
 ```
 
-Open the `.dmg`, drag **PM Workbench** to Applications. The app is not signed or notarized (that
-needs a paid Apple developer account), so macOS blocks the first launch. Either right-click the
-app and choose **Open**, then **Open** again, or remove the quarantine flag once:
+Open the `.dmg` and drag **PM Workbench** to Applications. A build made with Developer ID
+credentials is signed and notarized, and opens normally. Without them the build is unsigned, so
+right-click the app and choose **Open** the first time, or run
+`xattr -dr com.apple.quarantine "/Applications/PM Workbench.app"`.
 
-```
-xattr -dr com.apple.quarantine "/Applications/PM Workbench.app"
-```
+To run from source instead: `npm run dev`.
 
-`npm run package:dir` builds an unpacked app for the machine you are on, which is how packaging was
-tested on Linux (the `.dmg` target needs macOS to build). To run from source instead: `npm run dev`.
+The first launch walks through setup: sign in, then connect the three repos, then templates, then
+a first product.
 
 ## Using it
 
@@ -105,7 +104,8 @@ npm run package                # macOS .dmg and .zip (run on a Mac); npm run pac
 npm run icon                   # redraw build/icon.png
 npm test                       # unit and integration tests
 npm run typecheck
-npm run smoke                  # launch the real app and check what it rendered (uses xvfb-run when present); SMOKE_BIN=<app> tests a packaged build
+npm run smoke                  # launch the real app and run 11 security and launch checks; SMOKE_BIN=<app> tests a packaged build
+npm run licenses               # regenerate docs/security/dependencies.md
 npm run seed -- --assign-roles # add --with-history for sample stage history and an empty product; two sample products against <owner>/pm-{artifacts,crm,pdr}; set PMWORKBENCH_HOME to keep it out of your real data
 ```
 
@@ -142,7 +142,9 @@ settings and token storage. The interface reaches it only through the bridge in
 | Flow metrics | `src/shared/metrics.ts`, `src/shared/pulse.ts`, `src/renderer/src/viewmodel/charts.ts` | Activity buckets and pulse, time in stage, stall flags, health; chart view models |
 | Interface | `src/renderer` | React: sign-in, repo-role settings, the tree/file browser, products, product home, link picker, workflow board, metrics and charts |
 
-Safety properties, each covered by a test or `npm run smoke`:
+The security evidence pack is in [`docs/security/`](docs/security/README.md), and the ship-criteria
+results are in [`docs/ship-checklist.md`](docs/ship-checklist.md). Safety properties, each covered
+by a test or `npm run smoke`:
 
 - The GitHub token is encrypted with the system keychain (`safeStorage`). If encryption is
   unavailable the app refuses to save it instead of writing plain text. `GITHUB_TOKEN` in the

@@ -69,7 +69,7 @@ export function fakeGitHub(owner: string, repos: Record<string, FakeRepo>) {
     const method = (init?.method ?? 'GET').toUpperCase();
     const reply = (status: number, body: unknown, extra: Record<string, string> = {}) => {
       log.push({ path: url.pathname, status, method });
-      return new Response(status === 304 ? null : JSON.stringify(body), { status, headers: { 'content-type': 'application/json', ...extra } });
+      return new Response(status === 304 || status === 204 ? null : JSON.stringify(body), { status, headers: { 'content-type': 'application/json', ...extra } });
     };
     if (state.rateLimited) return reply(403, { message: 'API rate limit exceeded' }, { 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': '1794700000' });
     const ok = (body: unknown) => {
@@ -132,6 +132,10 @@ export function fakeGitHub(owner: string, repos: Record<string, FakeRepo>) {
       return reply(404, { message: 'Not Found' });
     }
 
+    if (rest === 'pulls') {
+      const head = url.searchParams.get('head')?.split(':')[1];
+      return ok(appPulls(name).filter((p) => !head || p.head === head).map((p) => ({ number: p.number, html_url: `https://github.com/${owner}/${name}/pull/${p.number}`, head: { ref: p.head } })));
+    }
     let g;
     if ((g = /^git\/ref\/heads\/(.+)$/.exec(rest))) {
       const head = headOf(name, g[1]);
@@ -157,10 +161,19 @@ export function fakeGitHub(owner: string, repos: Record<string, FakeRepo>) {
       const content = Object.values(repo.files).find((c) => blobSha(c) === x![1]);
       return content === undefined ? notFound() : ok({ sha: x[1], content: Buffer.from(content).toString('base64'), encoding: 'base64' });
     }
-    if ((x = /^contents\/(.+)$/.exec(rest))) {
+    if ((x = /^contents(?:\/(.+))?$/.exec(rest))) {
       const at = filesAt(name, url.searchParams.get('ref'));
-      const content = at?.[x[1]];
+      const dir = x[1] ?? '';
+      const content = at?.[dir];
+      if (content === undefined && at) {
+        // A folder: list its direct children.
+        const prefix = dir ? `${dir}/` : '';
+        const kids = new Map<string, 'file' | 'dir'>();
+        for (const p of Object.keys(at)) if (p.startsWith(prefix)) { const rest2 = p.slice(prefix.length); const [first, ...more] = rest2.split('/'); kids.set(first, more.length ? 'dir' : 'file'); }
+        if (kids.size) return ok([...kids].map(([n, t]) => ({ type: t, name: n, path: prefix + n, sha: t === 'file' ? blobSha(at[prefix + n]) : sha1(prefix + n) })));
+      }
       if (content === undefined) return notFound();
+      x = [x[0], dir] as unknown as RegExpExecArray;
       return ok({ type: 'file', path: x[1], name: x[1].split('/').pop(), sha: blobSha(content), content: Buffer.from(content).toString('base64'), encoding: 'base64', html_url: `https://github.com/${owner}/${m[2]}/blob/main/${x[1]}` });
     }
     if ((x = /^pulls\/(\d+)(\/reviews|\/commits)?$/.exec(rest))) {

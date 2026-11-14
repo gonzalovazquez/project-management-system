@@ -31,7 +31,8 @@ export interface RepoList {
 }
 
 export type AuthState =
-  | { status: 'signed-out' }
+  /** `reason` says why the app signed out on its own (a revoked or expired token); `host` pre-fills sign-in. Local data is kept. */
+  | { status: 'signed-out'; reason?: string; host?: string }
   /** `offline`: GitHub couldn't be reached at launch to re-check the token; cached data is shown until a sync succeeds. */
   | { status: 'signed-in'; host: string; login: string; tokenSource: 'env' | 'keychain'; offline?: boolean };
 
@@ -72,7 +73,7 @@ export interface FileContent {
   sha: string;
 }
 
-export type ErrorCode = 'invalid' | 'not-signed-in' | 'no-role' | 'network' | 'blocked-host' | 'not-found';
+export type ErrorCode = 'invalid' | 'not-signed-in' | 'no-role' | 'network' | 'blocked-host' | 'not-found' | 'rate-limited';
 export type Result<T> = { ok: true; value: T } | { ok: false; error: ErrorCode; message: string };
 
 export const ok = <T>(value: T): Result<T> => ({ ok: true, value });

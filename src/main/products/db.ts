@@ -134,6 +134,11 @@ export const MIGRATIONS: string[] = [
   ALTER TABLE links ADD COLUMN pending_pr INTEGER;
   ALTER TABLE links ADD COLUMN pending_branch TEXT;
   `,
+  // 5: resilience (Phase 5). A write is recorded before its branch is created, with the link it
+  // will add, so one interrupted mid-flight (quit, crash, power loss) can be finished or cleaned up.
+  `
+  ALTER TABLE writes ADD COLUMN link_plan TEXT;
+  `,
 ];
 
 export function openDatabase(file: string): DatabaseSync {

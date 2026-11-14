@@ -9,6 +9,7 @@ import { RepoBrowser } from './components/RepoBrowser.js';
 import { Settings } from './components/Settings.js';
 import { Sidebar } from './components/Sidebar.js';
 import { SignIn } from './components/SignIn.js';
+import { Onboarding } from './components/Onboarding.js';
 import { DEFAULT_ROUTE, type Route } from './route.js';
 
 function useDark(): boolean {
@@ -41,12 +42,32 @@ export function App() {
   }, []);
 
   useEffect(() => { refresh(); }, [refresh]);
+
+  // The main process signs out on its own if GitHub stops accepting the token; notice promptly.
+  useEffect(() => {
+    const check = () => void window.pmworkbench.getAuth().then((a) => setAuth((cur) => (cur && cur.status === a.status ? cur : a)));
+    const t = setInterval(check, 15_000);
+    window.addEventListener('focus', check);
+    return () => { clearInterval(t); window.removeEventListener('focus', check); };
+  }, []);
   useEffect(() => { if (auth?.status === 'signed-in') refreshProducts(); }, [auth?.status, refreshProducts]);
 
   if (!auth || !settings) return <div className="loading" data-state="loading">Loading…</div>;
 
   if (auth.status === 'signed-out') {
-    return <SignIn onSignedIn={(a) => { setAuth(a); void window.pmworkbench.getSettings().then(setSettings); }} />;
+    return <SignIn reason={auth.reason} host={auth.host || settings.host} onSignedIn={(a) => { setAuth(a); void window.pmworkbench.getSettings().then(setSettings); }} />;
+  }
+
+  // First run: guided setup. Someone already set up (roles chosen and a product made) skips it.
+  const setUp = REPO_ROLES.every((r) => settings.repoRoles[r]) && products.length > 0;
+  if (!settings.onboarded && !setUp) {
+    return (
+      <Onboarding
+        settings={settings}
+        onSettings={setSettings}
+        onFinish={(id) => { refreshProducts(); setRoute(id ? { view: 'product', id } : DEFAULT_ROUTE); }}
+      />
+    );
   }
 
   // Nothing else is useful until all three repo roles are set, so first run lands on Settings.
@@ -99,7 +120,7 @@ export function App() {
               onDeleted={() => { refreshProducts(); setRoute(DEFAULT_ROUTE); }}
             />
           )}
-          {current.view === 'browse' && <RepoBrowser role={current.role} settings={settings} />}
+          {current.view === 'browse' && <RepoBrowser key={current.role} role={current.role} settings={settings} />}
         </div>
       </div>
       {creating && (

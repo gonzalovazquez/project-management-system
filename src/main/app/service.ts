@@ -1,7 +1,7 @@
 import { fail, ok, REPO_ROLES, type AuthState, type FileContent, type PublicSettings, type RepoList, type RepoRef, type RepoRole, type Result, type SettingsPatch, type TreeEntry } from '../../shared/ipc.js';
 import type { AddLinksResult, FileDialogResult, ImportReport, Link, Product, ProductHome, ProductSummary, PullDetail, PullSummary } from '../../shared/products.js';
 import { normalizeHost } from '../github/host.js';
-import type { GitHubClient } from '../github/client.js';
+import type { ClientHooks, GitHubClient } from '../github/client.js';
 import type { HttpCache } from '../products/httpcache.js';
 import { syncLinks } from '../products/sync.js';
 import { WriteEngine, WriteError } from '../write/engine.js';
@@ -22,7 +22,7 @@ export interface ServiceDeps {
    * the call that validates it. `guard` tells the client's network write guard which branches are
    * the connected repos' defaults.
    */
-  createClient(host: string, token: string, guard?: WriteGuardOptions): GitHubClient;
+  createClient(host: string, token: string, guard?: WriteGuardOptions, hooks?: ClientHooks): GitHubClient;
   products: ProductStore;
   /** GitHub response cache for the board sync; lives in the same database as the products. */
   cache: HttpCache;
@@ -68,6 +68,60 @@ export class AppService {
     });
   }
 
+  /** Until when GitHub asked us to back off. Nothing is sent before then; reads come from the cache. */
+  private limitedUntil?: Date;
+
+  /** Hooks for a client built for `token`: they only act while that token is the session's. */
+  private hooksFor(token: string): ClientHooks {
+    return {
+      onUnauthorized: () => { if (this.token === token) void this.expire(); },
+      onRateLimited: (until) => { if (!this.limitedUntil || until > this.limitedUntil) this.limitedUntil = until; },
+    };
+  }
+
+  /**
+   * The token stopped working (revoked, expired, or its access was removed). Sign out and forget the
+   * dead token, but keep every product, link, cached state and setting, so signing in again with a
+   * new token picks up exactly where the PM left off.
+   */
+  private async expire(): Promise<void> {
+    // Signed out at once, so no further call uses the dead token; then forget it.
+    this.auth = { status: 'signed-out', host: this.host, reason: 'GitHub no longer accepts your token. It may have expired or been revoked. Sign in with a new one; your products and settings are kept.' };
+    this.token = undefined;
+    this.client = undefined;
+    await this.d.tokens.set(null).catch(() => undefined);
+  }
+
+  private cooling(): string | undefined {
+    const until = this.limitedUntil;
+    if (!until || until.getTime() <= this.now().getTime()) { this.limitedUntil = undefined; return undefined; }
+    return `GitHub's rate limit is used up until ${until.toLocaleTimeString()}. The app is waiting rather than retrying.`;
+  }
+
+  /**
+   * A read that falls back to its last good answer when GitHub can't be reached or asked us to back
+   * off, so browsing and previews keep working offline. Live answers refresh the cache.
+   */
+  private async offlineCapable<T>(key: string, live: () => Promise<T>): Promise<Result<T>> {
+    const cached = () => this.d.cache.get(`offline|${this.host}|${key}`);
+    const cool = this.cooling();
+    if (cool) {
+      const c = cached();
+      return c ? ok(c.body as T) : fail('rate-limited', cool);
+    }
+    try {
+      const v = await live();
+      this.d.cache.put(`offline|${this.host}|${key}`, 200, v);
+      return ok(v);
+    } catch (e) {
+      const status = (e as { status?: number }).status;
+      const c = cached();
+      if (c && (status === undefined || status >= 500 || this.cooling())) return ok(c.body as T);
+      if (this.auth.status !== 'signed-in') return fail('not-signed-in', this.auth.status === 'signed-out' && this.auth.reason ? this.auth.reason : 'Sign in first.');
+      return fail('network', msg(e));
+    }
+  }
+
   private rememberBranches(roles: Partial<Record<RepoRole, RepoRef>>) {
     this.defaultBranches = Object.fromEntries(Object.values(roles).filter((r): r is RepoRef => !!r).map((r) => [r.fullName.toLowerCase(), r.defaultBranch]));
   }
@@ -78,7 +132,7 @@ export class AppService {
     this.rememberBranches(settings.repoRoles);
     const { token, source } = await this.d.tokens.get();
     if (!settings.host || !token) return;
-    const client = this.d.createClient(settings.host, token, this.guard);
+    const client = this.d.createClient(settings.host, token, this.guard, this.hooksFor(token));
     const tokenSource = source === 'env' ? 'env' : 'keychain';
     try {
       const { login } = await client.whoAmI();
@@ -86,6 +140,7 @@ export class AppService {
       this.token = token;
       this.client = client;
       this.auth = { status: 'signed-in', host: settings.host, login, tokenSource };
+      await this.engine.recoverInterrupted().catch(() => undefined);
     } catch (e) {
       const status = (e as { status?: number }).status;
       if (status === undefined && settings.login) {
@@ -114,7 +169,7 @@ export class AppService {
       return fail('invalid', msg(e));
     }
     if (!token.trim()) return fail('invalid', 'Enter a personal access token.');
-    const client = this.d.createClient(host, token, this.guard);
+    const client = this.d.createClient(host, token, this.guard, this.hooksFor(token));
     let login: string;
     try {
       ({ login } = await client.whoAmI());
@@ -145,7 +200,7 @@ export class AppService {
   }
 
   private requireClient(): Result<GitHubClient> {
-    if (this.auth.status !== 'signed-in' || !this.client) return fail('not-signed-in', 'Sign in with a GitHub personal access token first.');
+    if (this.auth.status !== 'signed-in' || !this.client) return fail('not-signed-in', this.auth.status === 'signed-out' && this.auth.reason ? this.auth.reason : 'Sign in with a GitHub personal access token first.');
     return ok(this.client);
   }
 
@@ -187,11 +242,7 @@ export class AppService {
     if (!c.ok) return c;
     const repo = await this.repoForRole(role);
     if (!repo.ok) return repo;
-    try {
-      return ok(await c.value.listTree(repo.value, path));
-    } catch (e) {
-      return fail('network', msg(e));
-    }
+    return this.offlineCapable(`tree|${repo.value.fullName}|${path}`, () => c.value.listTree(repo.value, path));
   }
 
   async readFile(role: RepoRole, path: string): Promise<Result<FileContent>> {
@@ -199,12 +250,10 @@ export class AppService {
     if (!c.ok) return c;
     const repo = await this.repoForRole(role);
     if (!repo.ok) return repo;
-    try {
+    return this.offlineCapable(`file|${repo.value.fullName}|${path}`, async () => {
       const f = await c.value.getFile(repo.value, path);
-      return ok({ path: f.path, content: f.content, truncated: f.truncated, htmlUrl: f.htmlUrl, sha: f.sha });
-    } catch (e) {
-      return fail('network', msg(e));
-    }
+      return { path: f.path, content: f.content, truncated: f.truncated, htmlUrl: f.htmlUrl, sha: f.sha };
+    });
   }
 
   // -------------------------------------------------------------------------------------------
@@ -217,11 +266,7 @@ export class AppService {
     if (!c.ok) return c;
     const repo = await this.repoForRole(role);
     if (!repo.ok) return repo;
-    try {
-      return ok(await c.value.listPulls(repo.value));
-    } catch (e) {
-      return fail('network', msg(e));
-    }
+    return this.offlineCapable(`pulls|${repo.value.fullName}`, () => c.value.listPulls(repo.value));
   }
 
   async readPull(role: unknown, n: unknown): Promise<Result<PullDetail>> {
@@ -231,12 +276,9 @@ export class AppService {
     if (!c.ok) return c;
     const repo = await this.repoForRole(role);
     if (!repo.ok) return repo;
-    try {
-      const pr = await c.value.getPull(repo.value, n);
-      return pr ? ok(pr) : fail('not-found', `Pull request #${n} doesn't exist in ${repo.value.fullName}.`);
-    } catch (e) {
-      return fail('network', msg(e));
-    }
+    const r = await this.offlineCapable(`pull|${repo.value.fullName}|${n}`, () => c.value.getPull(repo.value, n));
+    if (!r.ok) return r;
+    return r.value ? ok(r.value) : fail('not-found', `Pull request #${n} doesn't exist in ${repo.value.fullName}.`);
   }
 
   // -------------------------------------------------------------------------------------------
@@ -348,6 +390,12 @@ export class AppService {
     if (!home) return fail('not-found', 'That product no longer exists.');
     const c = this.requireClient();
     if (!c.ok) return c;
+    const cool = this.cooling();
+    if (cool) {
+      // Backing off: show what's cached and say why, without sending anything.
+      this.d.products.recordSync(productId, { ok: false, error: cool, requests: 0, notModified: 0 });
+      return ok(this.d.products.home(productId)!);
+    }
     const s = await this.d.settings.load();
     const r = await syncLinks(home.links, s.host, s.repoRoles, c.value, this.d.cache, home.states, this.now());
     for (const o of r.outcomes) {
@@ -428,6 +476,8 @@ export class AppService {
   private async writeCall<T>(fn: () => Promise<T>): Promise<Result<T>> {
     const c = this.requireClient();
     if (!c.ok) return c;
+    const cool = this.cooling();
+    if (cool) return fail('rate-limited', cool);
     try {
       return ok(await fn());
     } catch (e) {
