@@ -13,25 +13,12 @@ import { SignIn } from './components/SignIn.js';
 import { Onboarding } from './components/Onboarding.js';
 import { DEFAULT_ROUTE, type Route } from './route.js';
 
-function useDark(): boolean {
-  const query = '(prefers-color-scheme: dark)';
-  const [dark, setDark] = useState(() => window.matchMedia(query).matches);
-  useEffect(() => {
-    const m = window.matchMedia(query);
-    const on = () => setDark(m.matches);
-    m.addEventListener('change', on);
-    return () => m.removeEventListener('change', on);
-  }, []);
-  return dark;
-}
-
 export function App() {
   const [auth, setAuth] = useState<AuthState>();
   const [settings, setSettings] = useState<PublicSettings>();
   const [route, setRoute] = useState<Route>(DEFAULT_ROUTE);
   const [products, setProducts] = useState<ProductSummary[]>([]);
   const [creating, setCreating] = useState(false);
-  useDark();
 
   const refreshProducts = useCallback(() => {
     void window.pmworkbench.listProducts().then((r) => { if (r.ok) setProducts(r.value); });

@@ -1,4 +1,4 @@
-import { fail, ok, REPO_ROLES, type AuthState, type FileContent, type PublicSettings, type RepoList, type RepoRef, type RepoRole, type Result, type SettingsPatch, type TreeEntry } from '../../shared/ipc.js';
+import { fail, ok, REPO_ROLES, type Appearance, type AuthState, type FileContent, type PublicSettings, type RepoList, type RepoRef, type RepoRole, type Result, type SettingsPatch, type TreeEntry } from '../../shared/ipc.js';
 import type { AddLinksResult, FileDialogResult, ImportReport, ItemState, Link, Product, ProductHome, ProductSummary, PullDetail, PullSummary } from '../../shared/products.js';
 import { normalizeHost } from '../github/host.js';
 import type { ClientHooks, GitHubClient } from '../github/client.js';
@@ -32,6 +32,11 @@ export interface ServiceDeps {
     openText(): Promise<string | null>;
   };
   now?: () => Date;
+  /**
+   * Applies the appearance setting to the app (Electron's nativeTheme.themeSource), which is what
+   * the window's light/dark styles, title bar and sidebar material follow.
+   */
+  applyAppearance?: (a: Appearance) => void;
   /** Opens a URL in the system browser (Electron's shell.openExternal). Only ever called with a vetted GitHub URL. */
   openExternal?: (url: string) => Promise<void>;
 }
@@ -146,6 +151,8 @@ export class AppService {
   /** Tries to resume a session from a stored host and token (env var or Keychain). Never throws. */
   async init(): Promise<void> {
     const settings = await this.d.settings.load();
+    // Before the window exists, so it opens in the chosen appearance.
+    this.d.applyAppearance?.(settings.appearance);
     this.rememberBranches(settings.repoRoles, settings.branchConventions);
     const { token, source } = await this.d.tokens.get();
     if (!settings.host || !token) return;
@@ -239,7 +246,8 @@ export class AppService {
 
   async saveSettings(patch: SettingsPatch): Promise<Result<PublicSettings>> {
     try {
-      await this.d.settings.save(patch);
+      const saved = await this.d.settings.save(patch);
+      if (patch.appearance !== undefined) this.d.applyAppearance?.(saved.appearance);
     } catch (e) {
       return fail('invalid', msg(e));
     }
