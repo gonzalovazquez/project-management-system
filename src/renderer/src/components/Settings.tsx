@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react';
+import { DEFAULT_METRIC_SETTINGS, type MetricSettings } from '../../../shared/metrics.js';
+import { STAGE_LABEL, STAGES } from '../../../shared/products.js';
 import { APPEARANCES, ROLE_LABEL, REPO_ROLES, type Appearance, type AuthState, type PublicSettings, type RepoRef, type RepoRole } from '../../../shared/ipc.js';
 
 const APPEARANCE_LABEL: Record<Appearance, string> = { system: 'Match system', light: 'Light', dark: 'Dark' };
@@ -73,6 +75,18 @@ export function Settings({ auth, onAuth, settings, first, onSettings, onSignedOu
     if (result.ok) onSettings(result.value);
   };
 
+  const [metrics, setMetrics] = useState<MetricSettings>(settings.metrics);
+  const [metricsMsg, setMetricsMsg] = useState<{ ok: boolean; text: string }>();
+  const metricsDirty = JSON.stringify(metrics) !== JSON.stringify(settings.metrics);
+  const saveMetrics = async (next: MetricSettings) => {
+    const r = await window.pmworkbench.saveSettings({ metrics: next });
+    if (!r.ok) { setMetricsMsg({ ok: false, text: r.message }); return; }
+    onSettings(r.value);
+    setMetrics(r.value.metrics);
+    setMetricsMsg({ ok: true, text: 'Review points saved.' });
+  };
+  const days = (v: string) => Math.round(Number(v));
+
   const ready = REPO_ROLES.every((r) => settings.repoRoles[r]);
 
   return (
@@ -146,6 +160,31 @@ export function Settings({ auth, onAuth, settings, first, onSettings, onSignedOu
           </p>
         )}
       </form>
+      {!first && (
+        <form className="review-points" onSubmit={(e) => { e.preventDefault(); void saveMetrics(metrics); }}>
+          <span className="mut small">
+            Flow metrics: days an item can sit in each stage before it's flagged for review, and days without any GitHub activity before it counts as quiet.
+          </span>
+          <div className="rp-grid">
+            {STAGES.map((s) => (
+              <label key={s} className="fld">
+                {STAGE_LABEL[s]}
+                <input type="number" min={1} max={365} step={1} value={metrics.stageThresholds[s]}
+                  onChange={(e) => setMetrics({ ...metrics, stageThresholds: { ...metrics.stageThresholds, [s]: days(e.target.value) } })} />
+              </label>
+            ))}
+            <label className="fld">
+              Quiet after
+              <input type="number" min={1} max={365} step={1} value={metrics.quietDays} onChange={(e) => setMetrics({ ...metrics, quietDays: days(e.target.value) })} />
+            </label>
+          </div>
+          <div className="setrow">
+            <button className="btn" type="submit" disabled={!metricsDirty}>Save review points</button>
+            <button className="btn" type="button" onClick={() => void saveMetrics(structuredClone(DEFAULT_METRIC_SETTINGS))}>Reset to defaults</button>
+            {metricsMsg && <span className="small" style={{ color: metricsMsg.ok ? 'var(--green)' : 'var(--red)' }}>{metricsMsg.text}</span>}
+          </div>
+        </form>
+      )}
       <div className="setrow">
         <span className="mut small">Appearance</span>
         <select value={settings.appearance} onChange={(e) => void setAppearance(e.target.value as Appearance)}>

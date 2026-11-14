@@ -8,6 +8,8 @@
   --btn: #ffffff; --zebra: rgba(120, 120, 128, 0.045); --hover: rgba(0, 122, 255, 0.08); --select: rgba(0, 122, 255, 0.14);
   --blue: #007aff; --green: #34c759; --orange: #ff9500; --red: #ff3b30; --purple: #af52de; --teal: #30b0c7; --gray: #8e8e93; --indigo: #5856d6; --yellow: #c98f00;
   --series-1: #2a78d6; --series-2: #eb6834; --series-3: #1baf7a; --series-other: #898781;
+  /* Ordinal stage ramp (intake -> release) and the status color for 'past review point'; validated in docs/chart-colors.md. */
+  --stage-0: #86b6ef; --stage-1: #5598e7; --stage-2: #2a78d6; --stage-3: #1c5cab; --stage-4: #104281; --status-serious: #ec835a;
   --shadow: 0 0 0 0.5px rgba(60, 60, 67, 0.18), 0 1px 2px rgba(0, 0, 0, 0.05);
   --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Helvetica Neue", system-ui, sans-serif;
   --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
@@ -21,6 +23,7 @@
     --btn: #4a4a4d; --zebra: rgba(255, 255, 255, 0.03); --hover: rgba(10, 132, 255, 0.16); --select: rgba(10, 132, 255, 0.26);
     --blue: #0a84ff; --green: #30d158; --orange: #ff9f0a; --red: #ff453a; --purple: #bf5af2; --teal: #40c8e0; --gray: #98989d; --indigo: #7d7aff; --yellow: #ffd60a;
     --series-1: #3987e5; --series-2: #d95926; --series-3: #199e70;
+    --stage-0: #256abf; --stage-1: #3987e5; --stage-2: #6da7ec; --stage-3: #9ec5f4; --stage-4: #cde2fb;
     --shadow: 0 0 0 0.5px rgba(255, 255, 255, 0.08), 0 1px 2px rgba(0, 0, 0, 0.3);
     color-scheme: dark;
   }
@@ -112,8 +115,7 @@ button.item:hover { background: var(--fill); }
 .sheet-foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
 .sheet-foot.spread { justify-content: space-between; align-items: center; flex-wrap: wrap; }
 
-/* ---- kept for Phase 3b (flow metrics): the chart components are dormant but self-contained,
-   and reuse these classes once the workflow board wires them back in. */
+/* ---- Charts (flow metrics, Phase 3b) ---- */
 .chart-card { gap: 8px; }
 .chart-card .sub { font-size: 11.5px; color: var(--label2); margin-top: -4px; }
 svg.chart { display: block; overflow: visible; max-width: 100%; }
@@ -147,7 +149,7 @@ tbody tr:last-child td { border-bottom: 0; }
 .brow .trk { height: 10px; border-radius: 4px; background: var(--fill); overflow: hidden; }
 .brow .trk i { display: block; height: 100%; background: var(--series-1); border-radius: 0 4px 4px 0; }
 .hbars { display: flex; flex-direction: column; gap: 6px; }
-.hrow { display: grid; grid-template-columns: 80px minmax(0, 1fr) 30px; gap: 8px; align-items: center; }
+.hrow { display: grid; grid-template-columns: 112px minmax(0, 1fr) 30px; gap: 8px; align-items: center; }
 .hrow .trk { height: 12px; background: var(--fill); border-radius: 4px; overflow: hidden; }
 .hrow .trk i { display: block; height: 100%; background: var(--series-1); border-radius: 0 4px 4px 0; }
 .lbar { display: flex; gap: 2px; height: 20px; }
@@ -280,3 +282,23 @@ svg.heat rect { cursor: default; }
 .bcard-foot { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; padding: 0 10px 8px; }
 .bcard-foot select { font-size: 11.5px; max-width: 100%; }
 .sheet-preview { max-height: 55vh; overflow: auto; }
+
+/* ---------- Flow metrics (Phase 3b) ---------- */
+.metrics { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.metric-strip { display: flex; gap: 10px; align-items: stretch; flex-wrap: wrap; }
+.metric-strip .tile { flex: 1; min-width: 160px; background: var(--card); border-radius: 12px; box-shadow: var(--shadow); padding: 10px 14px; display: flex; flex-direction: column; gap: 2px; border-left: 3px solid var(--tone, var(--gray)); }
+.metric-strip .tile[data-tone="ok"] { --tone: var(--green); }
+.metric-strip .tile[data-tone="warn"] { --tone: var(--orange); }
+.metric-strip .tile[data-tone="bad"] { --tone: var(--red); }
+.metric-strip .tile b { font-size: 18px; font-variant-numeric: tabular-nums; }
+.metric-strip > .btn { align-self: center; }
+.metric-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; align-items: start; }
+.metric-col { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+@media (max-width: 1100px) { .metric-grid { grid-template-columns: minmax(0, 1fr); } }
+.flag-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: 12.5px; }
+.flag-list li { display: flex; gap: 8px; align-items: baseline; }
+.tag[data-code="over-threshold"], .tag[data-code="broken"] { background: color-mix(in srgb, var(--status-serious) 18%, transparent); color: var(--label); }
+.tag[data-code="quiet"], .tag[data-code="empty-stage"] { background: color-mix(in srgb, var(--orange) 16%, transparent); color: var(--label); }
+.bcard-flag { font-size: 11px; color: var(--label); background: color-mix(in srgb, var(--status-serious) 14%, transparent); border-radius: 5px; padding: 2px 6px; align-self: flex-start; }
+.review-points { display: flex; flex-direction: column; gap: 8px; }
+.rp-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; }

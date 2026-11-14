@@ -5,6 +5,7 @@
  * See docs/decisions/product-model.md.
  */
 import type { RepoRole } from './ipc.js';
+import type { StagePoint } from './metrics.js';
 
 export const ARTIFACT_TYPES = ['problem-brief', 'solution-brief', 'specification', 'control-book', 'exec-comm', 'other'] as const;
 export type ArtifactType = (typeof ARTIFACT_TYPES)[number];
@@ -124,9 +125,20 @@ export interface ProductInput {
 
 /** An item's current state on GitHub, from the last successful sync. */
 export type ItemState =
-  | { kind: 'file'; exists: true; sha: string; lastChangedAt?: string; lastChangedBy?: string }
+  | { kind: 'file'; exists: true; sha: string; lastChangedAt?: string; lastChangedBy?: string; activity?: ActivityEvent[] }
   | { kind: 'file'; exists: false }
-  | { kind: 'pull'; status: PullStatus; title: string; updatedAt: string; reviewers: Reviewer[] };
+  | { kind: 'pull'; status: PullStatus; title: string; updatedAt: string; reviewers: Reviewer[]; activity?: ActivityEvent[] };
+
+/**
+ * Something that happened to an item on GitHub, for the flow metrics: a commit touching a linked
+ * file, or a pull request being opened, reviewed, committed to or merged. `id` dedupes the same
+ * commit seen through two linked files, or through a file and a PR.
+ */
+export interface ActivityEvent {
+  id: string;
+  at: string;
+  type: 'commit' | 'opened' | 'review' | 'merged';
+}
 
 export type PullStatus = 'draft' | 'open' | 'changes-requested' | 'approved' | 'merged' | 'closed';
 export const PULL_STATUS_LABEL: Record<PullStatus, string> = {
@@ -156,6 +168,8 @@ export interface ProductHome {
   /** Keyed by link id. Missing until the item has synced once. */
   states: Record<string, ItemState>;
   sync: SyncStatus;
+  /** Daily stage counts since the product was set up, oldest first, for the stage-over-time chart. */
+  history: StagePoint[];
 }
 
 export interface PullSummary {

@@ -1,5 +1,5 @@
 import type { RepoRef, RepoRole } from '../../shared/ipc.js';
-import { markdownSections, type ItemState, type Link, type LinkHealth, type PullStatus, type Reviewer } from '../../shared/products.js';
+import { markdownSections, type ActivityEvent, type ItemState, type Link, type LinkHealth, type PullStatus, type Reviewer } from '../../shared/products.js';
 import { RateLimitedError, type GitHubClient } from '../github/client.js';
 import type { HttpCache } from './httpcache.js';
 
@@ -10,10 +10,11 @@ import type { HttpCache } from './httpcache.js';
  *
  * - one recursive tree read per repo answers "does it exist, and what is its blob SHA" for every
  *   file link in that repo at once, and finds a moved file by its old SHA for free;
- * - a file's last-changed commit is fetched only when its SHA differs from the last sync;
+ * - a file's recent commits (its last change, and the activity the flow metrics count) are fetched
+ *   only when its SHA differs from the last sync, in one request;
  * - a conversation's sections are read from the blob, which is immutable, so it's fetched once per
  *   version of the file and only its section anchors are kept;
- * - a pull request costs two reads (the PR and its reviews).
+ * - a pull request costs three reads (the PR, its reviews, its commits).
  *
  * Every read goes through the response cache with its ETag, so anything unchanged comes back as a
  * 304, which GitHub doesn't count against the rate limit. Only a 404 marks a link broken; any other
@@ -39,8 +40,11 @@ export interface SyncResult {
 
 type Got<T> = { status: 200; body: T } | { status: 404 };
 interface TreeBody { truncated: boolean; blobs: [string, string][] }
-interface CommitBody { date?: string; by?: string }
-interface PullBody { title: string; state: string; merged: boolean; draft: boolean; updatedAt: string; requested: string[] }
+interface CommitBody { date?: string; by?: string; commits: ActivityEvent[] }
+interface PullBody { title: string; state: string; merged: boolean; draft: boolean; updatedAt: string; requested: string[]; createdAt?: string; mergedAt?: string }
+
+/** How much commit history per file is kept for the activity metrics: the last 100 commits touching it. */
+export const COMMITS_PER_FILE = 100;
 type ReviewsBody = { login: string; state: string; at: string }[];
 
 const CONCURRENCY = 4;
@@ -126,13 +130,18 @@ export async function syncLinks(
     return { sha: c.status === 200 ? c.body.sha : undefined };
   };
 
-  const lastCommit = (repo: RepoRef, path: string) => get<CommitBody>(
+  type RestCommit = { sha: string; commit: { committer?: { date?: string }; author?: { date?: string; name?: string } }; author?: { login?: string } | null };
+  const commitAt = (c: RestCommit) => c.commit.committer?.date ?? c.commit.author?.date ?? '';
+
+  const fileCommits = (repo: RepoRef, path: string) => get<CommitBody>(
     'GET /repos/{owner}/{repo}/commits',
-    { owner: repo.owner, repo: repo.name, sha: repo.defaultBranch, path, per_page: 1 },
+    { owner: repo.owner, repo: repo.name, sha: repo.defaultBranch, path, per_page: COMMITS_PER_FILE },
     (d) => {
-      const c = (d as { commit: { committer?: { date?: string }; author?: { date?: string; name?: string } }; author?: { login?: string } | null }[])[0];
-      if (!c) return {};
-      return { date: c.commit.committer?.date ?? c.commit.author?.date, by: c.author?.login ?? c.commit.author?.name };
+      const list = d as RestCommit[];
+      const c = list[0];
+      const commits = list.map((x) => ({ id: `commit:${x.sha}`, at: commitAt(x), type: 'commit' as const })).filter((x) => x.at);
+      if (!c) return { commits };
+      return { date: commitAt(c) || undefined, by: c.author?.login ?? c.commit.author?.name, commits };
     },
   );
 
@@ -157,13 +166,17 @@ export async function syncLinks(
     const prev = previous[l.id];
     let lastChangedAt: string | undefined;
     let lastChangedBy: string | undefined;
-    if (prev?.kind === 'file' && prev.exists && prev.sha === sha && prev.lastChangedAt) {
-      ({ lastChangedAt, lastChangedBy } = prev);
+    let activity: ActivityEvent[] | undefined;
+    // Same content as last time means no new commits touched it, so the stored history still holds.
+    if (prev?.kind === 'file' && prev.exists && prev.sha === sha && prev.lastChangedAt && prev.activity) {
+      ({ lastChangedAt, lastChangedBy, activity } = prev);
     } else {
-      const c = await lastCommit(repo, path);
-      if (c.status === 200) ({ date: lastChangedAt, by: lastChangedBy } = c.body);
+      const c = await fileCommits(repo, path);
+      if (c.status === 200) ({ date: lastChangedAt, by: lastChangedBy, commits: activity } = c.body);
     }
-    const state: ItemState = { kind: 'file', exists: true, sha, ...(lastChangedAt ? { lastChangedAt } : {}), ...(lastChangedBy ? { lastChangedBy } : {}) };
+    const state: ItemState = {
+      kind: 'file', exists: true, sha, ...(lastChangedAt ? { lastChangedAt } : {}), ...(lastChangedBy ? { lastChangedBy } : {}), ...(activity ? { activity } : {}),
+    };
     if (l.kind === 'conversation' && l.anchor) {
       const a = await anchorsOf(repo, sha);
       if (a.status === 200 && !a.body.includes(l.anchor)) return { linkId: l.id, state, blobSha: sha, health: broken(`The section "${l.title}" is no longer in ${path}.`) };
@@ -176,13 +189,26 @@ export async function syncLinks(
     const params = { owner: repo.owner, repo: repo.name, pull_number: n };
     const pr = await get<PullBody>('GET /repos/{owner}/{repo}/pulls/{pull_number}', params, (d) => {
       const p = d as { title: string; state: string; merged?: boolean; merged_at?: string | null; draft?: boolean; updated_at: string; requested_reviewers?: { login: string }[] };
-      return { title: p.title, state: p.state, merged: !!(p.merged || p.merged_at), draft: !!p.draft, updatedAt: p.updated_at, requested: (p.requested_reviewers ?? []).map((r) => r.login) };
+      const q = p as typeof p & { created_at?: string };
+      return {
+        title: p.title, state: p.state, merged: !!(p.merged || p.merged_at), draft: !!p.draft, updatedAt: p.updated_at, requested: (p.requested_reviewers ?? []).map((r) => r.login),
+        ...(q.created_at ? { createdAt: q.created_at } : {}), ...(p.merged_at ? { mergedAt: p.merged_at } : {}),
+      };
     });
     if (pr.status === 404) return { linkId: l.id, health: broken(`Pull request #${n} no longer exists in ${repo.fullName}.`) };
     const rv = await get<ReviewsBody>('GET /repos/{owner}/{repo}/pulls/{pull_number}/reviews', { ...params, per_page: 100 }, (d) =>
       (d as { user: { login: string } | null; state: string; submitted_at?: string }[]).map((r) => ({ login: r.user?.login ?? '', state: r.state, at: r.submitted_at ?? '' })));
-    const { status, reviewers } = pullStatus(pr.body, rv.status === 200 ? rv.body : []);
-    return { linkId: l.id, health: ok, state: { kind: 'pull', status, title: pr.body.title, updatedAt: pr.body.updatedAt, reviewers } };
+    const cm = await get<ActivityEvent[]>('GET /repos/{owner}/{repo}/pulls/{pull_number}/commits', { ...params, per_page: 100 }, (d) =>
+      (d as RestCommit[]).map((x) => ({ id: `commit:${x.sha}`, at: commitAt(x), type: 'commit' as const })).filter((x) => x.at));
+    const reviews = rv.status === 200 ? rv.body : [];
+    const { status, reviewers } = pullStatus(pr.body, reviews);
+    const activity: ActivityEvent[] = [
+      ...(pr.body.createdAt ? [{ id: `pr:${repo.fullName}#${n}:opened`, at: pr.body.createdAt, type: 'opened' as const }] : []),
+      ...reviews.filter((r) => r.at).map((r, i) => ({ id: `pr:${repo.fullName}#${n}:review:${i}:${r.at}`, at: r.at, type: 'review' as const })),
+      ...(cm.status === 200 ? cm.body : []),
+      ...(pr.body.mergedAt ? [{ id: `pr:${repo.fullName}#${n}:merged`, at: pr.body.mergedAt, type: 'merged' as const }] : []),
+    ];
+    return { linkId: l.id, health: ok, state: { kind: 'pull', status, title: pr.body.title, updatedAt: pr.body.updatedAt, reviewers, activity } };
   };
 
   const one = async (l: Link): Promise<SyncOutcome> => {

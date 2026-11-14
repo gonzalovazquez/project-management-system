@@ -1,9 +1,13 @@
 import { useMemo, useState } from 'react';
 import { ARTIFACT_TYPE_LABEL, STAGE_HINT, STAGE_LABEL, STAGES, type Link, type ProductHome, type WorkflowStage } from '../../../shared/products.js';
+import type { Flag } from '../../../shared/metrics.js';
 import { ago, buildBoard, NO_FILTERS, type BoardFilters, type Card } from '../viewmodel/board.js';
+import { flagsFor } from '../viewmodel/charts.js';
 
 interface Props {
   home: ProductHome;
+  /** Stall flags from the flow metrics; item-level ones show on their card. */
+  flags: Flag[];
   /** Places an item in a stage, or back in the tray with null. Local only; nothing is written to GitHub. */
   onMove: (link: Link, stage: WorkflowStage | null) => void;
   onOpen: (link: Link) => void;
@@ -15,7 +19,7 @@ const DRAG_TYPE = 'application/x-pmworkbench-link';
  * The five-stage workflow board for one product. Cards move by drag and drop or with each card's
  * stage menu (the keyboard path). Moving a card only changes where the PM placed it on this Mac.
  */
-export function Board({ home, onMove, onOpen }: Props) {
+export function Board({ home, flags, onMove, onOpen }: Props) {
   const [filters, setFilters] = useState<BoardFilters>(NO_FILTERS);
   const [over, setOver] = useState<WorkflowStage | 'tray'>();
   const now = new Date();
@@ -50,6 +54,9 @@ export function Board({ home, onMove, onOpen }: Props) {
           <span className="bcard-state"><i aria-hidden="true" />{card.stateLabel}</span>
           {card.detail && <span className="mut small">{card.detail}</span>}
           {!card.detail && card.updatedAt && <span className="mut small">Updated {ago(card.updatedAt, now)}</span>}
+          {flagsFor(flags, l.id).filter((f) => f.code !== 'broken').map((f) => (
+            <span key={f.code} className="bcard-flag" data-code={f.code}>⚑ {f.code === 'over-threshold' ? 'Past review point' : 'Quiet'}: {f.text.split(': ').slice(1).join(': ')}</span>
+          ))}
         </button>
         <div className="bcard-foot">
           {!l.stage && card.suggested && (
