@@ -21,6 +21,14 @@ export function Preview({ link }: { link: Link }) {
         if (r.ok) setData({ kind: 'pull', pr: r.value }); else setError(r.message);
         return;
       }
+      // A pending item only exists on its pull request's branch until it merges.
+      if (link.pending && link.kind === 'artifact') {
+        const e = await window.pmworkbench.editSource(link.id);
+        if (!alive) return;
+        if (e.ok) setData({ kind: 'file', text: e.value.content, truncated: false, url: `From pull request #${link.pending.prNumber} (${link.pending.branch}); not on the default branch until it merges.` });
+        else setError(e.message);
+        return;
+      }
       const r = await window.pmworkbench.readFile(link.role, link.path!);
       if (!alive) return;
       if (!r.ok) { setError(r.message); return; }
@@ -33,7 +41,7 @@ export function Preview({ link }: { link: Link }) {
     };
     void run();
     return () => { alive = false; };
-  }, [link.id, link.path, link.anchor, link.prNumber, link.role, link.kind]);
+  }, [link.id, link.path, link.anchor, link.prNumber, link.role, link.kind, link.pending?.prNumber]);
 
   if (error) return <p className="small" style={{ color: 'var(--red)' }}>{error}</p>;
   if (!data) return <p className="mut small">Loading preview…</p>;

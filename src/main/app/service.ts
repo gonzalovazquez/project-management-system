@@ -4,6 +4,9 @@ import { normalizeHost } from '../github/host.js';
 import type { GitHubClient } from '../github/client.js';
 import type { HttpCache } from '../products/httpcache.js';
 import { syncLinks } from '../products/sync.js';
+import { WriteEngine, WriteError } from '../write/engine.js';
+import type { WriteGuardOptions } from '../write/guard.js';
+import type { EditSource, WritePreview, WriteResult } from '../../shared/writes.js';
 import { MappingError, parseMapping, planImport, toMapping } from '../products/mapping.js';
 import type { NewLink, ProductStore } from '../products/store.js';
 import { isId, isPrNumber, isRole, validateLinkInput, validateLinkPatch, validateProductInput } from '../products/validate.js';
@@ -14,8 +17,12 @@ import type { SettingsStore } from './settings.js';
 export interface ServiceDeps {
   settings: SettingsStore;
   tokens: Pick<TokenStore, 'get' | 'set' | 'secureStorageAvailable'>;
-  /** Builds a client for one host+token pair. Never called with an unvalidated token held onto past the call that validates it. */
-  createClient(host: string, token: string): GitHubClient;
+  /**
+   * Builds a client for one host+token pair. Never called with an unvalidated token held onto past
+   * the call that validates it. `guard` tells the client's network write guard which branches are
+   * the connected repos' defaults.
+   */
+  createClient(host: string, token: string, guard?: WriteGuardOptions): GitHubClient;
   products: ProductStore;
   /** GitHub response cache for the board sync; lives in the same database as the products. */
   cache: HttpCache;
@@ -25,6 +32,8 @@ export interface ServiceDeps {
     openText(): Promise<string | null>;
   };
   now?: () => Date;
+  /** Opens a URL in the system browser (Electron's shell.openExternal). Only ever called with a vetted GitHub URL. */
+  openExternal?: (url: string) => Promise<void>;
 }
 
 const msg = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -40,14 +49,36 @@ export class AppService {
   private token?: string;
   private client?: GitHubClient;
 
-  constructor(private d: ServiceDeps) {}
+  /** Default branch per connected repo ("owner/name" lowercase), kept current for the write guard. */
+  private defaultBranches: Record<string, string> = {};
+  private guard: WriteGuardOptions = { defaultBranches: () => this.defaultBranches };
+  private engine: WriteEngine;
+
+  constructor(private d: ServiceDeps) {
+    this.engine = new WriteEngine({
+      client: () => {
+        if (!this.client) throw new WriteError('invalid', 'Sign in with a GitHub personal access token first.');
+        return this.client;
+      },
+      products: d.products,
+      host: () => this.host,
+      roles: async () => (await this.d.settings.load()).repoRoles,
+      guard: this.guard,
+      now: d.now,
+    });
+  }
+
+  private rememberBranches(roles: Partial<Record<RepoRole, RepoRef>>) {
+    this.defaultBranches = Object.fromEntries(Object.values(roles).filter((r): r is RepoRef => !!r).map((r) => [r.fullName.toLowerCase(), r.defaultBranch]));
+  }
 
   /** Tries to resume a session from a stored host and token (env var or Keychain). Never throws. */
   async init(): Promise<void> {
     const settings = await this.d.settings.load();
+    this.rememberBranches(settings.repoRoles);
     const { token, source } = await this.d.tokens.get();
     if (!settings.host || !token) return;
-    const client = this.d.createClient(settings.host, token);
+    const client = this.d.createClient(settings.host, token, this.guard);
     const tokenSource = source === 'env' ? 'env' : 'keychain';
     try {
       const { login } = await client.whoAmI();
@@ -83,7 +114,7 @@ export class AppService {
       return fail('invalid', msg(e));
     }
     if (!token.trim()) return fail('invalid', 'Enter a personal access token.');
-    const client = this.d.createClient(host, token);
+    const client = this.d.createClient(host, token, this.guard);
     let login: string;
     try {
       ({ login } = await client.whoAmI());
@@ -130,7 +161,8 @@ export class AppService {
 
   async getSettings(): Promise<PublicSettings> {
     const s = await this.d.settings.load();
-    return { host: s.host, repoRoles: s.repoRoles, appearance: s.appearance, onboarded: s.onboarded, metrics: s.metrics, secureStorageAvailable: this.d.tokens.secureStorageAvailable };
+    this.rememberBranches(s.repoRoles);
+    return { host: s.host, repoRoles: s.repoRoles, appearance: s.appearance, onboarded: s.onboarded, metrics: s.metrics, templates: s.templates, secureStorageAvailable: this.d.tokens.secureStorageAvailable };
   }
 
   async saveSettings(patch: SettingsPatch): Promise<Result<PublicSettings>> {
@@ -319,6 +351,7 @@ export class AppService {
     const s = await this.d.settings.load();
     const r = await syncLinks(home.links, s.host, s.repoRoles, c.value, this.d.cache, home.states, this.now());
     for (const o of r.outcomes) {
+      if (o.clearPending) this.d.products.clearPending(o.linkId);
       if (o.health) this.d.products.setHealth(o.linkId, o.health);
       if (o.state) this.d.products.setItemState(o.linkId, o.state);
       const link = home.links.find((l) => l.id === o.linkId);
@@ -386,5 +419,48 @@ export class AppService {
       this.d.products.snapshot(product.id);
       return { productId: product.id, productName: product.name, imported: added, unresolved: plan.unresolved };
     });
+  }
+
+  // -------------------------------------------------------------------------------------------
+  // Write-back (Phase 4a). Every write is a branch plus a pull request; see src/main/write/engine.ts.
+  // -------------------------------------------------------------------------------------------
+
+  private async writeCall<T>(fn: () => Promise<T>): Promise<Result<T>> {
+    const c = this.requireClient();
+    if (!c.ok) return c;
+    try {
+      return ok(await fn());
+    } catch (e) {
+      if (e instanceof WriteError) return fail(e.code === 'not-found' ? 'not-found' : e.code === 'network' ? 'network' : 'invalid', e.message);
+      return fail('network', msg(e));
+    }
+  }
+
+  async previewWrite(draft: unknown): Promise<Result<WritePreview>> {
+    return this.writeCall(() => this.engine.preview(draft));
+  }
+
+  async confirmWrite(previewId: unknown): Promise<Result<WriteResult>> {
+    return this.writeCall(() => this.engine.confirm(previewId));
+  }
+
+  async editSource(linkId: unknown): Promise<Result<EditSource>> {
+    return this.writeCall(() => this.engine.editSource(linkId));
+  }
+
+  /** Opens a page on the configured GitHub web host. Everything else is refused, so this can't become a way out to arbitrary sites. */
+  async openOnGitHub(url: unknown): Promise<Result<void>> {
+    if (this.auth.status !== 'signed-in') return fail('not-signed-in', 'Sign in first.');
+    let u: URL;
+    try {
+      u = new URL(String(url));
+    } catch {
+      return fail('invalid', 'Not a valid link.');
+    }
+    const web = this.auth.host.toLowerCase();
+    if (u.protocol !== 'https:' || u.hostname.toLowerCase() !== web || u.username || u.password) return fail('blocked-host', `Only links on ${web} can be opened from here.`);
+    if (!this.d.openExternal) return fail('invalid', 'Opening links is not available.');
+    await this.d.openExternal(u.toString());
+    return ok(undefined);
   }
 }

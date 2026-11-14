@@ -4,6 +4,7 @@ import { ARTIFACT_TYPE_LABEL, ARTIFACT_TYPES, describeTarget, groupLinks, STAGE_
 import { syncLine } from '../viewmodel/board.js';
 import { metricsModel } from '../viewmodel/charts.js';
 import { Metrics, MetricStrip } from './Metrics.js';
+import { ArtifactWriter } from './ArtifactWriter.js';
 import { Board } from './Board.js';
 import { LinkPicker } from './LinkPicker.js';
 import { Preview } from './Preview.js';
@@ -43,6 +44,7 @@ export function ProductHome({ id, settings, onChanged, onDeleted, tab, onTab }: 
   const [notice, setNotice] = useState<string>();
   const [checking, setChecking] = useState(false);
   const [previewing, setPreviewing] = useState<Link>();
+  const [writer, setWriter] = useState<{ kind: 'create' } | { kind: 'edit'; link: Link }>();
   const [selected, setSelected] = useState<Link>();
   const [sheet, setSheet] = useState<'edit' | 'link' | 'delete' | { relink: Link }>();
 
@@ -139,6 +141,7 @@ export function ProductHome({ id, settings, onChanged, onDeleted, tab, onTab }: 
           <h3>Objective</h3>
           <div className="pa">
             <button className="btn" onClick={() => setSheet('edit')}>Edit</button>
+            <button className="btn" onClick={() => setWriter({ kind: 'create' })} disabled={!settings.repoRoles.artifacts}>New artifact</button>
             <button className="btn primary" onClick={() => setSheet('link')}>Link items</button>
           </div>
         </div>
@@ -218,7 +221,11 @@ export function ProductHome({ id, settings, onChanged, onDeleted, tab, onTab }: 
                     <span className="mut small">{ROLE_LABEL[selected.role]} · {selected.repoFullName} · {describeTarget(selected)}</span>
                     <span className="mut small">{selected.stage ? `Stage: ${STAGE_LABEL[selected.stage]}` : 'Unstaged'}</span>
                   </div>
-                  <button className="btn danger small-btn" onClick={() => void remove(selected)}>Unlink</button>
+                  <div className="pa">
+                    {selected.kind === 'artifact' && selected.health.state !== 'broken' && <button className="btn small-btn" onClick={() => setWriter({ kind: 'edit', link: selected })}>Edit</button>}
+                    {selected.pending && <span className="tag" title="Not on the default branch until its pull request merges">pending · PR #{selected.pending.prNumber}</span>}
+                    <button className="btn danger small-btn" onClick={() => void remove(selected)}>Unlink</button>
+                  </div>
                 </div>
                 {selected.kind === 'artifact' && (
                   <label className="setrow small">
@@ -247,6 +254,14 @@ export function ProductHome({ id, settings, onChanged, onDeleted, tab, onTab }: 
         </>
       )}
 
+      {writer && (
+        <ArtifactWriter
+          mode={writer.kind === 'create' ? { kind: 'create', product, links } : { kind: 'edit', link: writer.link }}
+          settings={settings}
+          onClose={() => setWriter(undefined)}
+          onDone={() => { void load().then(() => void check()); changed.current(); }}
+        />
+      )}
       {previewing && (
         <Sheet
           name="board-preview"
@@ -256,6 +271,7 @@ export function ProductHome({ id, settings, onChanged, onDeleted, tab, onTab }: 
           footer={
             <>
               {previewing.health.state === 'broken' && <button className="btn" onClick={() => { setSheet({ relink: previewing }); setPreviewing(undefined); }}>Relink…</button>}
+              {previewing.kind === 'artifact' && previewing.health.state !== 'broken' && <button className="btn" onClick={() => { setWriter({ kind: 'edit', link: previewing }); setPreviewing(undefined); }}>Edit…</button>}
               <button className="btn" data-autofocus onClick={() => setPreviewing(undefined)}>Close</button>
             </>
           }

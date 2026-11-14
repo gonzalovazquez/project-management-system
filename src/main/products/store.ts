@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 import type { RepoRole } from '../../shared/ipc.js';
 import { localDate, MAX_POINTS, stageCounts, type StagePoint } from '../../shared/metrics.js';
+import type { AppPull } from '../../shared/writes.js';
 import { isStage, type ArtifactType, type ItemState, type Kpi, type Link, type LinkHealth, type LinkKind, type Product, type ProductHome, type ProductInput, type ProductSummary, type SyncStatus, type WorkflowStage } from '../../shared/products.js';
 
 /** A link ready to store: the repo already resolved from its role. */
@@ -18,6 +19,7 @@ export interface NewLink {
   blobSha?: string;
   stage?: WorkflowStage;
   stageEnteredAt?: string;
+  pending?: { prNumber: number; branch: string };
 }
 
 export interface StageEvent {
@@ -41,6 +43,7 @@ interface LinkRow {
   path: string | null; anchor: string | null; pr_number: number | null; title: string; artifact_type: ArtifactType | null;
   blob_sha: string | null; stage: string | null; stage_entered_at: string | null;
   health: 'ok' | 'broken' | null; health_reason: string | null; moved_to: string | null; checked_at: string | null; created_at: string;
+  pending_pr: number | null; pending_branch: string | null;
 }
 
 
@@ -61,6 +64,7 @@ function toLink(r: LinkRow): Link {
   if (r.blob_sha !== null) l.blobSha = r.blob_sha;
   if (r.stage !== null && isStage(r.stage)) l.stage = r.stage;
   if (r.stage_entered_at !== null) l.stageEnteredAt = r.stage_entered_at;
+  if (r.pending_pr !== null && r.pending_branch !== null) l.pending = { prNumber: Number(r.pending_pr), branch: r.pending_branch };
   return l;
 }
 
@@ -239,13 +243,17 @@ export class ProductStore {
   }
 
   /** Adds links in one transaction, skipping any already linked to this product. */
+  /** Ids of the links inserted by the last addLinks call, in order (duplicates skipped). */
+  lastAddedIds: string[] = [];
+
   addLinks(productId: string, links: NewLink[]): { added: number; duplicates: number } {
     const ins = this.db.prepare(`
-      INSERT INTO links (id, product_id, role, kind, repo_host, repo_full_name, path, anchor, pr_number, title, artifact_type, blob_sha, stage, stage_entered_at, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO links (id, product_id, role, kind, repo_host, repo_full_name, path, anchor, pr_number, title, artifact_type, blob_sha, stage, stage_entered_at, created_at, pending_pr, pending_branch)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT DO NOTHING
     `);
     // ON CONFLICT (not INSERT OR IGNORE) so only an already-linked target is skipped; a CHECK failure still throws.
+    this.lastAddedIds = [];
     return this.tx(() => {
       let added = 0;
       const at = this.now().toISOString();
@@ -255,9 +263,10 @@ export class ProductStore {
         const stageAt = l.stage ? l.stageEnteredAt ?? at : null;
         const r = ins.run(
           id, productId, l.role, l.kind, l.repoHost, l.repoFullName, l.path ?? null, l.anchor ?? null, l.prNumber ?? null,
-          l.title, l.artifactType ?? null, l.blobSha ?? null, l.stage ?? null, stageAt, at,
+          l.title, l.artifactType ?? null, l.blobSha ?? null, l.stage ?? null, stageAt, at, l.pending?.prNumber ?? null, l.pending?.branch ?? null,
         );
         added += Number(r.changes);
+        if (Number(r.changes)) this.lastAddedIds.push(id);
         if (Number(r.changes) && l.stage) ev.run(id, productId, l.stage, stageAt);
       }
       if (added) this.touch(productId);
@@ -307,5 +316,47 @@ export class ProductStore {
 
   private touch(productId: string) {
     this.db.prepare('UPDATE products SET updated_at = ? WHERE id = ?').run(this.now().toISOString(), productId);
+  }
+
+  /** The item's pull request merged: the link now points at a normal file on the default branch. */
+  clearPending(linkId: string): void {
+    this.db.prepare('UPDATE links SET pending_pr = NULL, pending_branch = NULL WHERE id = ?').run(linkId);
+  }
+
+  // ------------------------------------------------------------------ branches and PRs the app opened
+
+  recordWrite(w: Omit<AppPull, 'id' | 'createdAt' | 'updatedAt'> & { repoHost: string }): AppPull {
+    const id = randomUUID();
+    const at = this.now().toISOString();
+    this.db.prepare(`
+      INSERT INTO writes (id, product_id, role, repo_host, repo_full_name, base, branch, pr_number, pr_url, title, paths, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(id, w.productId ?? null, w.role, w.repoHost, w.repo, w.base, w.branch, w.prNumber ?? null, w.prUrl ?? null, w.title, JSON.stringify(w.paths), at, at);
+    return this.writes().find((x) => x.id === id)!;
+  }
+
+  /** Adds paths to a write after another commit went onto its branch. */
+  touchWrite(id: string, paths: string[]): void {
+    const cur = this.writes().find((w) => w.id === id);
+    if (!cur) return;
+    const all = [...new Set([...cur.paths, ...paths])];
+    this.db.prepare('UPDATE writes SET paths = ?, updated_at = ? WHERE id = ?').run(JSON.stringify(all), this.now().toISOString(), id);
+  }
+
+  writes(): AppPull[] {
+    const rows = this.db.prepare('SELECT * FROM writes ORDER BY created_at DESC').all() as {
+      id: string; product_id: string | null; role: AppPull['role']; repo_full_name: string; base: string; branch: string; pr_number: number | null; pr_url: string | null;
+      title: string; paths: string; created_at: string; updated_at: string;
+    }[];
+    return rows.map((r) => ({
+      id: r.id, ...(r.product_id ? { productId: r.product_id } : {}), role: r.role, repo: r.repo_full_name, base: r.base, branch: r.branch,
+      ...(r.pr_number !== null ? { prNumber: Number(r.pr_number) } : {}), ...(r.pr_url ? { prUrl: r.pr_url } : {}),
+      title: r.title, paths: JSON.parse(r.paths) as string[], createdAt: r.created_at, updatedAt: r.updated_at,
+    }));
+  }
+
+  /** App writes in a repo whose branch touches `path`, newest first. */
+  writesTouching(repo: string, path: string): AppPull[] {
+    return this.writes().filter((w) => w.repo.toLowerCase() === repo.toLowerCase() && w.paths.includes(path));
   }
 }

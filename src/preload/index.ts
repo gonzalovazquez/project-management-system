@@ -29,6 +29,10 @@ const api: PMWorkbenchApi = {
   moveLink: (linkId, stage) => ipcRenderer.invoke(CHANNELS.moveLink, linkId, stage),
   exportProduct: (id) => ipcRenderer.invoke(CHANNELS.exportProduct, id),
   importProduct: () => ipcRenderer.invoke(CHANNELS.importProduct),
+  previewWrite: (draft) => ipcRenderer.invoke(CHANNELS.previewWrite, draft),
+  confirmWrite: (id) => ipcRenderer.invoke(CHANNELS.confirmWrite, id),
+  editSource: (linkId) => ipcRenderer.invoke(CHANNELS.editSource, linkId),
+  openOnGitHub: (url) => ipcRenderer.invoke(CHANNELS.openOnGitHub, url),
 };
 
 contextBridge.exposeInMainWorld('pmworkbench', api);

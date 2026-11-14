@@ -28,6 +28,10 @@ stage over time, time in stage against review points, stall flags, and an explai
 These are flow metrics: they show how work moves, not whether the objective moved. See
 [`docs/decisions/flow-metrics.md`](docs/decisions/flow-metrics.md).
 
+**Phase 4a** adds write-back: create an artifact from a template, or edit a linked one, and it
+lands as a branch plus a pull request in the artifacts repo after a preview you confirm. Nothing is
+ever committed to a default branch. See [`docs/decisions/write-back.md`](docs/decisions/write-back.md).
+
 ## Install
 
 There is no signed release. Build it yourself on the Mac you will use it on:
@@ -82,7 +86,14 @@ tested on Linux (the `.dmg` target needs macOS to build). To run from source ins
    health, then charts for activity per week (by repo), items by stage over time, time in stage, a
    daily activity heatmap, and the health breakdown. Every chart has a table view. The review
    points are set in Settings. The product home shows a compact pulse / flags / health strip.
-9. **Browse.** Each repo role in the sidebar still opens a read-only tree-and-file view.
+9. **Write.** **New artifact** on a product opens an editor with Write and Preview tabs. It starts
+   from the type's template (set paths in Settings → Artifact templates). Pick the type, title,
+   destination path and board stage. To change an existing artifact, use **Edit** on a linked one.
+   **Review changes** shows the repo, branch, diff and pull request text; nothing is sent until
+   **Open pull request**. A new artifact is linked straight away and shows as pending until its
+   pull request merges. Editing a file the app already has an open pull request for adds a commit
+   to that pull request instead of opening another.
+10. **Browse.** Each repo role in the sidebar still opens a read-only tree-and-file view.
 
 ## Commands
 
@@ -116,12 +127,16 @@ settings and token storage. The interface reaches it only through the bridge in
 | `syncProduct` | Sync a product's items with GitHub: link health (broken, moved) and board state, through the response cache |
 | `moveLink` | Place an item in a workflow stage, or back in the unstaged tray |
 | `exportProduct`, `importProduct` | Save a product's mapping to a file, or import one as a new product |
+| `previewWrite`, `confirmWrite` | Build a branch, diff and pull request without sending anything; then send exactly that preview |
+| `editSource` | The current text of a linked artifact, from the app's open pull request touching it if there is one |
+| `openOnGitHub` | Open a page on the configured GitHub host in the browser; any other URL is refused |
 
 | Piece | Where | What it does |
 |---|---|---|
 | GitHub access | `src/main/github` | Host → API base URL, the network allow-list wrapper, the Octokit-based client |
 | App service | `src/main/app` | Sign-in/session, settings store, token storage (keychain-encrypted), IPC registration, sender-trust check |
 | Product model | `src/main/products`, `src/shared/products.ts` | SQLite schema and migrations, the product store, IPC input validation, the export format |
+| Write-back | `src/main/write` | The write engine, the network write guard, the diff |
 | Sync | `src/main/products/sync.ts`, `httpcache.ts` | Board state and link health from GitHub, conditional requests through a local response cache |
 | Shell | `src/main/index.ts`, `src/preload` | Window, security settings, the renderer-side network guard, bridge |
 | Flow metrics | `src/shared/metrics.ts`, `src/shared/pulse.ts`, `src/renderer/src/viewmodel/charts.ts` | Activity buckets and pulse, time in stage, stall flags, health; chart view models |
@@ -139,8 +154,9 @@ Safety properties, each covered by a test or `npm run smoke`:
   a strict CSP in the built app, and a crashed window process is reloaded.
 - IPC calls are checked against the sender's frame URL; a call from anything other than the app's
   own page is rejected before it reaches the service.
-- Nothing here writes to GitHub. Products and links are local; that's a later phase, and it will
-  go through a pull request, never a direct commit.
+- Writes go through one engine and are always a new `pmworkbench/…` branch plus a pull request,
+  or a commit on such a branch, after a preview the PM confirms. A network-level write guard
+  refuses any other write, including anything touching a default branch, before it is sent.
 - Every product call from the window is validated in the main process before it reaches SQL
   (`src/main/products/validate.ts`), and all SQL uses bound parameters.
 - An exported mapping holds references and titles only: no file contents, no token.
@@ -153,7 +169,8 @@ App data (settings, encrypted token, `products.db`) lives in Electron's user dat
 - Stage history starts the day a product is set up (GitHub keeps none), and weeks the app wasn't
   opened stay empty in the stage chart.
 - Activity per file is capped at its last 100 commits.
-- No write-back. Opening a PR from the app is Phase 4.
+- Write-back covers artifacts only. Logging CRM conversations, raising PDRs and showing approval
+  status is Phase 4b.
 - A sync reads one tree per repo, plus a commit lookup or blob read only for files whose content
   changed, plus two reads per linked pull request. Unchanged data comes back as free 304s. See
   the decision doc for measured costs.

@@ -5,6 +5,7 @@
  * exposed on window.pmworkbench.
  */
 import type { MetricSettings } from './metrics.js';
+import type { EditSource, WriteDraft, WritePreview, WriteResult } from './writes.js';
 import type { AddLinksResult, ArtifactType, WorkflowStage, FileDialogResult, ImportReport, Link, LinkInput, Product, ProductHome, ProductInput, ProductSummary, PullDetail, PullSummary } from './products.js';
 
 export type RepoRole = 'artifacts' | 'crm' | 'pdr';
@@ -42,6 +43,8 @@ export interface PublicSettings {
   secureStorageAvailable: boolean;
   /** Flow-metric review points: days in each stage, and days without activity, before an item is flagged. */
   metrics: MetricSettings;
+  /** Template file per artifact type in the artifacts repo. */
+  templates: Partial<Record<ArtifactType, string>>;
 }
 
 export interface SettingsPatch {
@@ -49,6 +52,8 @@ export interface SettingsPatch {
   appearance?: Appearance;
   onboarded?: boolean;
   metrics?: MetricSettings;
+  /** Set a type's template path, or null to clear it. */
+  templates?: Partial<Record<ArtifactType, string | null>>;
 }
 
 export interface TreeEntry {
@@ -106,6 +111,15 @@ export interface PMWorkbenchApi {
   exportProduct(id: string): Promise<Result<FileDialogResult<{ path: string }>>>;
   /** Asks for a mapping file, then imports it as a new product. */
   importProduct(): Promise<Result<FileDialogResult<ImportReport>>>;
+
+  /** Write-back: build the branch, diff and pull request for a change, without sending anything. */
+  previewWrite(draft: WriteDraft): Promise<Result<WritePreview>>;
+  /** Send exactly what a preview showed: a branch, one commit, and a pull request (or a commit on the app's existing one). */
+  confirmWrite(previewId: string): Promise<Result<WriteResult>>;
+  /** The current text of a linked artifact to edit, from the app's open pull request touching it if there is one. */
+  editSource(linkId: string): Promise<Result<EditSource>>;
+  /** Opens a page on the configured GitHub host (a pull request, a file) in the default browser. Any other URL is refused. */
+  openOnGitHub(url: string): Promise<Result<void>>;
 }
 
 export interface LinkUpdate {
@@ -140,4 +154,8 @@ export const CHANNELS = {
   moveLink: 'pmw:move-link',
   exportProduct: 'pmw:export-product',
   importProduct: 'pmw:import-product',
+  previewWrite: 'pmw:preview-write',
+  confirmWrite: 'pmw:confirm-write',
+  editSource: 'pmw:edit-source',
+  openOnGitHub: 'pmw:open-on-github',
 } as const;
