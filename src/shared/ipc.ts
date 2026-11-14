@@ -4,6 +4,7 @@
  * bridge (src/preload/index.ts) to a handler registered in src/main/app/ipc.ts. Nothing else is
  * exposed on window.pmworkbench.
  */
+import type { MetricSettings } from './metrics.js';
 import type { AddLinksResult, ArtifactType, WorkflowStage, FileDialogResult, ImportReport, Link, LinkInput, Product, ProductHome, ProductInput, ProductSummary, PullDetail, PullSummary } from './products.js';
 
 export type RepoRole = 'artifacts' | 'crm' | 'pdr';
@@ -39,12 +40,15 @@ export interface PublicSettings {
   appearance: Appearance;
   onboarded: boolean;
   secureStorageAvailable: boolean;
+  /** Flow-metric review points: days in each stage, and days without activity, before an item is flagged. */
+  metrics: MetricSettings;
 }
 
 export interface SettingsPatch {
   repoRoles?: Partial<Record<RepoRole, RepoRef | null>>;
   appearance?: Appearance;
   onboarded?: boolean;
+  metrics?: MetricSettings;
 }
 
 export interface TreeEntry {

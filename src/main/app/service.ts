@@ -130,7 +130,7 @@ export class AppService {
 
   async getSettings(): Promise<PublicSettings> {
     const s = await this.d.settings.load();
-    return { host: s.host, repoRoles: s.repoRoles, appearance: s.appearance, onboarded: s.onboarded, secureStorageAvailable: this.d.tokens.secureStorageAvailable };
+    return { host: s.host, repoRoles: s.repoRoles, appearance: s.appearance, onboarded: s.onboarded, metrics: s.metrics, secureStorageAvailable: this.d.tokens.secureStorageAvailable };
   }
 
   async saveSettings(patch: SettingsPatch): Promise<Result<PublicSettings>> {
@@ -267,7 +267,11 @@ export class AppService {
       if (!repo) return fail('no-role', `No repo is assigned to the ${v.value.role} role yet.`);
       rows.push({ ...v.value, repoHost: s.host, repoFullName: repo.fullName });
     }
-    return this.local(() => this.d.products.addLinks(productId, rows));
+    return this.local(() => {
+      const r = this.d.products.addLinks(productId, rows);
+      this.d.products.snapshot(productId);
+      return r;
+    });
   }
 
   async updateLink(linkId: unknown, patch: unknown): Promise<Result<Link>> {
@@ -295,7 +299,10 @@ export class AppService {
 
   async removeLink(linkId: unknown): Promise<Result<void>> {
     if (!isId(linkId)) return fail('invalid', 'Unknown link.');
-    return this.d.products.removeLink(linkId) ? ok(undefined) : fail('not-found', 'That link no longer exists.');
+    const l = this.d.products.getLink(linkId);
+    if (!l || !this.d.products.removeLink(linkId)) return fail('not-found', 'That link no longer exists.');
+    this.d.products.snapshot(l.productId);
+    return ok(undefined);
   }
 
   /**
@@ -319,6 +326,7 @@ export class AppService {
     }
     this.d.products.recordSync(productId, { ok: !r.error, error: r.error, requests: r.requests, notModified: r.notModified });
     if (!r.error && this.auth.status === 'signed-in' && this.auth.offline) this.auth = { ...this.auth, offline: false };
+    this.d.products.snapshot(productId);
     return ok(this.d.products.home(productId)!);
   }
 
@@ -375,6 +383,7 @@ export class AppService {
     return this.local(() => {
       const product = this.d.products.createProduct(v.value);
       const { added } = this.d.products.addLinks(product.id, plan.links);
+      this.d.products.snapshot(product.id);
       return { productId: product.id, productName: product.name, imported: added, unresolved: plan.unresolved };
     });
   }

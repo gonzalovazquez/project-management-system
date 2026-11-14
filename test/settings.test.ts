@@ -1,3 +1,4 @@
+import { DEFAULT_METRIC_SETTINGS } from '../src/shared/metrics.js';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { RepoRef } from '../src/shared/ipc.js';
@@ -8,7 +9,7 @@ const repo = (name: string): RepoRef => ({ owner: 'gonzalovazquez', name, fullNa
 
 describe('defaultSettings', () => {
   it('starts with no host, no roles, system appearance and not onboarded', () => {
-    expect(defaultSettings()).toEqual({ host: '', repoRoles: {}, appearance: 'system', onboarded: false });
+    expect(defaultSettings()).toEqual({ host: '', repoRoles: {}, appearance: 'system', onboarded: false, metrics: DEFAULT_METRIC_SETTINGS });
   });
 });
 
@@ -84,5 +85,16 @@ describe('createSettingsStore', () => {
     const loaded = await createSettingsStore(path).load();
     expect(loaded.repoRoles.artifacts).toBeUndefined();
     expect(loaded.repoRoles.pdr?.fullName).toBe('gonzalovazquez/pdr');
+  });
+});
+
+describe('metric settings', () => {
+  it('accepts whole-day review points and rejects anything else', async () => {
+    const store = createSettingsStore(join(tmp(), 's.json'));
+    const m = { stageThresholds: { intake: 7, problem: 14, solution: 21, specification: 14, release: 30 }, quietDays: 10 };
+    expect((await store.save({ metrics: m })).metrics).toEqual(m);
+    expect((await store.load()).metrics).toEqual(m);
+    await expect(store.save({ metrics: { ...m, quietDays: 0 } })).rejects.toThrow(/whole number/);
+    await expect(store.save({ metrics: { ...m, stageThresholds: { ...m.stageThresholds, release: 2.5 } } })).rejects.toThrow(/whole number/);
   });
 });

@@ -10,17 +10,26 @@
  * left alone, so running it twice is harmless. Most items are placed in a workflow stage; the control
  * book and one Globex conversation are left unstaged so the board's tray has something in it. Nothing here talks to GitHub; open each product in
  * the app to check its links.
+ *
+ * --with-history backdates "Checkout retry flow" so its flow metrics have something to draw: 10
+ * weeks of made-up daily stage counts and stage-entry dates spread over the past two months, plus
+ * an "Empty product" with no links. That history is sample data for checking the charts, not
+ * anything GitHub said.
  */
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { parseArgs } from 'node:util';
 import { createSettingsStore } from '../src/main/app/settings.js';
+import { localDate, stageCounts } from '../src/shared/metrics.js';
 import { openDatabase } from '../src/main/products/db.js';
 import { ProductStore, type NewLink } from '../src/main/products/store.js';
 import type { RepoRef, RepoRole } from '../src/shared/ipc.js';
 
 const { values } = parseArgs({
-  options: { owner: { type: 'string', default: 'gonzalovazquez' }, host: { type: 'string', default: 'github.com' }, 'assign-roles': { type: 'boolean', default: false } },
+  options: {
+    owner: { type: 'string', default: 'gonzalovazquez' }, host: { type: 'string', default: 'github.com' },
+    'assign-roles': { type: 'boolean', default: false }, 'with-history': { type: 'boolean', default: false },
+  },
 });
 const owner = values.owner!;
 const host = values.host!;
@@ -65,13 +74,36 @@ const SAMPLES = [
   },
 ];
 
-const store = new ProductStore(openDatabase(join(home, 'products.db')));
+const db = openDatabase(join(home, 'products.db'));
+const store = new ProductStore(db);
 const existing = new Set(store.listProducts().map((p) => p.name));
 for (const s of SAMPLES) {
   if (existing.has(s.input.name)) { console.log(`skip   ${s.input.name} (already exists)`); continue; }
   const p = store.createProduct(s.input);
   const r = store.addLinks(p.id, s.links);
   console.log(`seeded ${s.input.name}: ${r.added} links`);
+}
+
+if (values['with-history']) {
+  const DAY = 86_400_000;
+  const now = Date.now();
+  const p = store.listProducts().find((x) => x.name === 'Checkout retry flow');
+  if (p) {
+    const links = store.links(p.id);
+    const entered: Record<string, number> = { intake: 40, problem: 26, specification: 12, release: 3 };
+    for (const l of links) if (l.stage) db.prepare('UPDATE links SET stage_entered_at = ? WHERE id = ?').run(new Date(now - (entered[l.stage] ?? 5) * DAY).toISOString(), l.id);
+    // Ten weeks of daily counts: items arriving in intake and moving right over time.
+    for (let d = 70; d >= 1; d--) {
+      const t = 70 - d;
+      const counts = { ...stageCounts([]), intake: t < 30 ? 2 + (t > 10 ? 1 : 0) : 2, problem: t > 20 ? (t > 55 ? 1 : 2) : 0, specification: t > 50 ? 1 : 0, release: t > 66 ? 1 : 0, unstaged: 1 };
+      db.prepare('INSERT INTO stage_snapshots (product_id, date, counts) VALUES (?, ?, ?) ON CONFLICT DO NOTHING').run(p.id, localDate(new Date(now - d * DAY)), JSON.stringify(counts));
+    }
+    console.log('history 70 days of sample stage counts for Checkout retry flow');
+  }
+  if (!store.listProducts().some((x) => x.name === 'Empty product')) {
+    store.createProduct({ name: 'Empty product', objective: '', kpis: [] });
+    console.log('seeded Empty product: no links');
+  }
 }
 
 if (values['assign-roles']) {

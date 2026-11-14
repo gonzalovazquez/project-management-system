@@ -1,7 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ROLE_LABEL, type PublicSettings } from '../../../shared/ipc.js';
 import { ARTIFACT_TYPE_LABEL, ARTIFACT_TYPES, describeTarget, groupLinks, STAGE_LABEL, type ArtifactType, type Link, type ProductHome as Home, type WorkflowStage } from '../../../shared/products.js';
 import { syncLine } from '../viewmodel/board.js';
+import { metricsModel } from '../viewmodel/charts.js';
+import { Metrics, MetricStrip } from './Metrics.js';
 import { Board } from './Board.js';
 import { LinkPicker } from './LinkPicker.js';
 import { Preview } from './Preview.js';
@@ -14,9 +16,11 @@ interface Props {
   /** Called after anything that changes the sidebar's product list (rename, delete, links added). */
   onChanged: () => void;
   onDeleted: () => void;
-  tab: 'home' | 'board';
-  onTab: (t: 'home' | 'board') => void;
+  tab: ProductTab;
+  onTab: (t: ProductTab) => void;
 }
+
+export type ProductTab = 'home' | 'board' | 'metrics';
 
 /** While a product is open, sync this often. With ETags an unchanged product costs a handful of free 304s. */
 const REFRESH_MS = 5 * 60_000;
@@ -75,6 +79,9 @@ export function ProductHome({ id, settings, onChanged, onDeleted, tab, onTab }: 
   useEffect(() => {
     if (selected && home) setSelected(home.links.find((l) => l.id === selected.id));
   }, [home]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Recomputed per render minute rather than per tick; metrics depend on "now" only at day granularity.
+  const metrics = useMemo(() => (home ? metricsModel(home, settings.metrics, new Date()) : undefined), [home, settings.metrics]);
 
   if (error) return <div className="empty card"><b>Can't open this product</b><span>{error}</span></div>;
   if (!home) return <div className="loading">Loading…</div>;
@@ -145,6 +152,7 @@ export function ProductHome({ id, settings, onChanged, onDeleted, tab, onTab }: 
           <div className="seg small" role="tablist" aria-label="View">
             <button role="tab" aria-selected={tab === 'home'} onClick={() => onTab('home')}>Home</button>
             <button role="tab" aria-selected={tab === 'board'} onClick={() => onTab('board')}>Board</button>
+            <button role="tab" aria-selected={tab === 'metrics'} onClick={() => onTab('metrics')}>Metrics</button>
           </div>
           <span className="mut">{links.length} linked item{links.length === 1 ? '' : 's'}{broken ? ` · ` : ''}</span>
           {broken > 0 && <span style={{ color: 'var(--red)' }}>{broken} broken</span>}
@@ -158,7 +166,9 @@ export function ProductHome({ id, settings, onChanged, onDeleted, tab, onTab }: 
       </section>
 
       {links.length > 0 && tab === 'board' ? (
-        <Board home={home} onMove={(l, s) => void move(l, s)} onOpen={setPreviewing} />
+        <Board home={home} flags={metrics?.flags ?? []} onMove={(l, s) => void move(l, s)} onOpen={setPreviewing} />
+      ) : links.length > 0 && tab === 'metrics' && metrics ? (
+        <Metrics model={metrics} />
       ) : links.length === 0 ? (
         <div className="empty card">
           <b>Nothing linked yet</b>
@@ -166,6 +176,8 @@ export function ProductHome({ id, settings, onChanged, onDeleted, tab, onTab }: 
           <button className="btn primary" onClick={() => setSheet('link')}>Link items</button>
         </div>
       ) : (
+        <>
+        {metrics && <MetricStrip model={metrics} onOpen={() => onTab('metrics')} />}
         <div className="home-grid">
           <div className="home-cols">
             <section className="card">
@@ -232,6 +244,7 @@ export function ProductHome({ id, settings, onChanged, onDeleted, tab, onTab }: 
             )}
           </aside>
         </div>
+        </>
       )}
 
       {previewing && (

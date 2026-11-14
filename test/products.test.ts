@@ -18,7 +18,7 @@ describe('product database migrations', () => {
     const db = openDatabase(':memory:');
     expect(schemaVersion(db)).toBe(MIGRATIONS.length);
     const tables = (db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").all() as { name: string }[]).map((r) => r.name);
-    expect(tables).toEqual(['http_cache', 'item_state', 'kpis', 'links', 'products', 'stage_events', 'sync_status']);
+    expect(tables).toEqual(['http_cache', 'item_state', 'kpis', 'links', 'products', 'stage_events', 'stage_snapshots', 'sync_status']);
   });
 
   it('is a no-op on a database that is already current, and keeps its data', () => {

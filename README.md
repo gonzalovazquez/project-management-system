@@ -23,6 +23,11 @@ metrics, and write-back via pull request are later phases.
 live GitHub state, and a local cache so it opens instantly and works offline. See
 [`docs/decisions/workflow-board.md`](docs/decisions/workflow-board.md).
 
+**Phase 3b** adds flow metrics per product: activity per week across the three repos, items by
+stage over time, time in stage against review points, stall flags, and an explainable health score.
+These are flow metrics: they show how work moves, not whether the objective moved. See
+[`docs/decisions/flow-metrics.md`](docs/decisions/flow-metrics.md).
+
 ## Install
 
 There is no signed release. Build it yourself on the Mac you will use it on:
@@ -71,8 +76,13 @@ tested on Linux (the `.dmg` target needs macOS to build). To run from source ins
    anything not yet placed in an **Unstaged** tray. Drag a card between columns, or use its stage
    menu. Each card shows its GitHub state: a file's last change and who made it, or a pull
    request's status (draft, open, changes requested, approved, merged, closed) and reviewers.
-   Filter by artifact type or customer. Moving a card only changes this Mac's mapping.
-8. **Browse.** Each repo role in the sidebar still opens a read-only tree-and-file view.
+   Filter by artifact type or customer. Moving a card only changes this Mac's mapping. Cards past
+   their stage's review point, or gone quiet, say so.
+8. **Flow metrics.** The product's **Metrics** tab shows its activity pulse, stall flags and flow
+   health, then charts for activity per week (by repo), items by stage over time, time in stage, a
+   daily activity heatmap, and the health breakdown. Every chart has a table view. The review
+   points are set in Settings. The product home shows a compact pulse / flags / health strip.
+9. **Browse.** Each repo role in the sidebar still opens a read-only tree-and-file view.
 
 ## Commands
 
@@ -85,7 +95,7 @@ npm run icon                   # redraw build/icon.png
 npm test                       # unit and integration tests
 npm run typecheck
 npm run smoke                  # launch the real app and check what it rendered (uses xvfb-run when present); SMOKE_BIN=<app> tests a packaged build
-npm run seed -- --assign-roles # two sample products against <owner>/pm-{artifacts,crm,pdr}; set PMWORKBENCH_HOME to keep it out of your real data
+npm run seed -- --assign-roles # add --with-history for sample stage history and an empty product; two sample products against <owner>/pm-{artifacts,crm,pdr}; set PMWORKBENCH_HOME to keep it out of your real data
 ```
 
 ## How it is built
@@ -114,7 +124,8 @@ settings and token storage. The interface reaches it only through the bridge in
 | Product model | `src/main/products`, `src/shared/products.ts` | SQLite schema and migrations, the product store, IPC input validation, the export format |
 | Sync | `src/main/products/sync.ts`, `httpcache.ts` | Board state and link health from GitHub, conditional requests through a local response cache |
 | Shell | `src/main/index.ts`, `src/preload` | Window, security settings, the renderer-side network guard, bridge |
-| Interface | `src/renderer` | React: sign-in, repo-role settings, the tree/file browser, products, product home, link picker, workflow board |
+| Flow metrics | `src/shared/metrics.ts`, `src/shared/pulse.ts`, `src/renderer/src/viewmodel/charts.ts` | Activity buckets and pulse, time in stage, stall flags, health; chart view models |
+| Interface | `src/renderer` | React: sign-in, repo-role settings, the tree/file browser, products, product home, link picker, workflow board, metrics and charts |
 
 Safety properties, each covered by a test or `npm run smoke`:
 
@@ -139,7 +150,9 @@ App data (settings, encrypted token, `products.db`) lives in Electron's user dat
 
 ### Known limits
 
-- No flow metrics view yet (Phase 3b). Stage moves are already recorded for it.
+- Stage history starts the day a product is set up (GitHub keeps none), and weeks the app wasn't
+  opened stay empty in the stage chart.
+- Activity per file is capped at its last 100 commits.
 - No write-back. Opening a PR from the app is Phase 4.
 - A sync reads one tree per repo, plus a commit lookup or blob read only for files whose content
   changed, plus two reads per linked pull request. Unchanged data comes back as free 304s. See

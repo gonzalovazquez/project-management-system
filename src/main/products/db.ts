@@ -103,6 +103,15 @@ export const MIGRATIONS: string[] = [
     not_modified     INTEGER
   );
   `,
+  // 3: flow metrics (Phase 3b). One row per product per local day: how many items sat in each stage.
+  `
+  CREATE TABLE stage_snapshots (
+    product_id  TEXT NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+    date        TEXT NOT NULL,
+    counts      TEXT NOT NULL,
+    PRIMARY KEY (product_id, date)
+  );
+  `,
 ];
 
 export function openDatabase(file: string): DatabaseSync {

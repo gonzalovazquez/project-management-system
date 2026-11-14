@@ -13,6 +13,9 @@ export interface FakePull {
   draft?: boolean;
   updatedAt?: string;
   requested?: string[];
+  /** Commit dates on the PR's branch. */
+  commits?: string[];
+  createdAt?: string;
   reviews?: { login: string; state: 'APPROVED' | 'CHANGES_REQUESTED' | 'COMMENTED' | 'DISMISSED'; at: string }[];
 }
 
@@ -72,12 +75,13 @@ export function fakeGitHub(owner: string, repos: Record<string, FakeRepo>) {
       if (content === undefined) return notFound();
       return ok({ type: 'file', path: x[1], name: x[1].split('/').pop(), sha: blobSha(content), content: Buffer.from(content).toString('base64'), encoding: 'base64', html_url: `https://github.com/${owner}/${m[2]}/blob/main/${x[1]}` });
     }
-    if ((x = /^pulls\/(\d+)(\/reviews)?$/.exec(rest))) {
+    if ((x = /^pulls\/(\d+)(\/reviews|\/commits)?$/.exec(rest))) {
       const pr = repo.pulls?.[Number(x[1])];
       if (!pr) return notFound();
+      if (x[2] === '/commits') return ok((pr.commits ?? []).map((at, i) => ({ sha: `pc${x![1]}-${i}`, commit: { committer: { date: at }, author: { name: 'gonzo', date: at } }, author: { login: 'gonzo' } })));
       if (x[2]) return ok((pr.reviews ?? []).map((r, i) => ({ id: i, user: { login: r.login }, state: r.state, submitted_at: r.at })));
       return ok({
-        number: Number(x[1]), title: pr.title, state: pr.state, merged: !!pr.merged, merged_at: pr.merged ? '2026-11-01T00:00:00Z' : null, draft: !!pr.draft,
+        number: Number(x[1]), title: pr.title, created_at: pr.createdAt ?? '2026-10-20T00:00:00Z', state: pr.state, merged: !!pr.merged, merged_at: pr.merged ? '2026-11-01T00:00:00Z' : null, draft: !!pr.draft,
         updated_at: pr.updatedAt ?? '2026-11-01T00:00:00Z', requested_reviewers: (pr.requested ?? []).map((login) => ({ login })),
         user: { login: 'gonzo' }, body: '', html_url: `https://github.com/${owner}/${m[2]}/pull/${x[1]}`, base: { ref: 'develop' }, head: { ref: 'spec' },
       });

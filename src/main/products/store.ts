@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 import type { RepoRole } from '../../shared/ipc.js';
+import { localDate, MAX_POINTS, stageCounts, type StagePoint } from '../../shared/metrics.js';
 import { isStage, type ArtifactType, type ItemState, type Kpi, type Link, type LinkHealth, type LinkKind, type Product, type ProductHome, type ProductInput, type ProductSummary, type SyncStatus, type WorkflowStage } from '../../shared/products.js';
 
 /** A link ready to store: the repo already resolved from its role. */
@@ -104,7 +105,31 @@ export class ProductStore {
   home(id: string): ProductHome | undefined {
     const product = this.getProduct(id);
     if (!product) return undefined;
-    return { product, links: this.links(id), states: this.states(id), sync: this.syncStatus(id) };
+    return { product, links: this.links(id), states: this.states(id), sync: this.syncStatus(id), history: this.history(id) };
+  }
+
+  /**
+   * Records today's stage counts for a product, replacing any earlier point from the same local day,
+   * and keeps at most MAX_POINTS days. Called after every sync and every stage change.
+   */
+  snapshot(productId: string): void {
+    const date = localDate(this.now());
+    const counts = stageCounts(this.links(productId));
+    this.tx(() => {
+      this.db.prepare(`
+        INSERT INTO stage_snapshots (product_id, date, counts) VALUES (?, ?, ?)
+        ON CONFLICT (product_id, date) DO UPDATE SET counts = excluded.counts
+      `).run(productId, date, JSON.stringify(counts));
+      this.db.prepare(`
+        DELETE FROM stage_snapshots WHERE product_id = ? AND date NOT IN
+          (SELECT date FROM stage_snapshots WHERE product_id = ? ORDER BY date DESC LIMIT ?)
+      `).run(productId, productId, MAX_POINTS);
+    });
+  }
+
+  history(productId: string): StagePoint[] {
+    const rows = this.db.prepare('SELECT date, counts FROM stage_snapshots WHERE product_id = ? ORDER BY date').all(productId) as { date: string; counts: string }[];
+    return rows.map((r) => ({ date: r.date, counts: { ...stageCounts([]), ...JSON.parse(r.counts) } }));
   }
 
   states(productId: string): Record<string, ItemState> {
@@ -158,6 +183,7 @@ export class ProductStore {
       this.db.prepare('INSERT INTO stage_events (link_id, product_id, from_stage, to_stage, at) VALUES (?, ?, ?, ?, ?)').run(id, cur.productId, cur.stage ?? null, stage, at);
       this.touch(cur.productId);
     });
+    this.snapshot(cur.productId);
     return this.getLink(id);
   }
 

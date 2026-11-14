@@ -25,7 +25,7 @@ export interface TipContent { title: string; rows: Array<{ label: string; value:
 interface TipState { content: TipContent; x: number; y: number }
 const Ctx = createContext<(t: TipState | null) => void>(() => undefined);
 
-/** One tooltip for every chart. Text goes in as text nodes, never as HTML, because names come from folders and Notion. */
+/** One tooltip for every chart. Text goes in as text nodes, never as HTML, because item titles come from repos. */
 export function TipProvider({ children }: { children: ReactNode }) {
   const [tip, setTip] = useState<TipState | null>(null);
   const style = tip ? { left: Math.min(tip.x + 14, window.innerWidth - 250), top: Math.min(tip.y + 16, window.innerHeight - 120) } : undefined;
