@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { AuthState, PublicSettings } from '../../shared/ipc.js';
+import type { ProductSummary } from '../../shared/products.js';
 import { REPO_ROLES, ROLE_LABEL } from '../../shared/ipc.js';
+import { ProductForm } from './components/ProductForm.js';
+import { ProductHome } from './components/ProductHome.js';
+import { ProductsPage } from './components/ProductsPage.js';
 import { RepoBrowser } from './components/RepoBrowser.js';
 import { Settings } from './components/Settings.js';
 import { Sidebar } from './components/Sidebar.js';
@@ -23,7 +27,13 @@ export function App() {
   const [auth, setAuth] = useState<AuthState>();
   const [settings, setSettings] = useState<PublicSettings>();
   const [route, setRoute] = useState<Route>(DEFAULT_ROUTE);
+  const [products, setProducts] = useState<ProductSummary[]>([]);
+  const [creating, setCreating] = useState(false);
   useDark();
+
+  const refreshProducts = useCallback(() => {
+    void window.pmworkbench.listProducts().then((r) => { if (r.ok) setProducts(r.value); });
+  }, []);
 
   const refresh = useCallback(() => {
     void window.pmworkbench.getAuth().then(setAuth);
@@ -31,6 +41,7 @@ export function App() {
   }, []);
 
   useEffect(() => { refresh(); }, [refresh]);
+  useEffect(() => { if (auth?.status === 'signed-in') refreshProducts(); }, [auth?.status, refreshProducts]);
 
   if (!auth || !settings) return <div className="loading" data-state="loading">Loading…</div>;
 
@@ -42,13 +53,16 @@ export function App() {
   const firstRun = !REPO_ROLES.every((r) => settings.repoRoles[r]);
   const current: Route = firstRun ? { view: 'settings' } : route;
 
-  const meta = current.view === 'settings'
-    ? { title: firstRun ? 'Connect your repos' : 'Settings', subtitle: firstRun ? 'One-time setup' : 'Repo roles and appearance' }
+  const productName = current.view === 'product' ? products.find((p) => p.id === current.id)?.name ?? 'Product' : '';
+  const meta =
+    current.view === 'settings' ? { title: firstRun ? 'Connect your repos' : 'Settings', subtitle: firstRun ? 'One-time setup' : 'Repo roles and appearance' }
+    : current.view === 'products' ? { title: 'Products', subtitle: 'Stored on this Mac only' }
+    : current.view === 'product' ? { title: productName, subtitle: 'Product home' }
     : { title: ROLE_LABEL[current.role], subtitle: settings.repoRoles[current.role]?.fullName ?? 'Not set' };
 
   return (
     <div className="app">
-      <Sidebar settings={settings} auth={auth} route={current} onNavigate={setRoute} />
+      <Sidebar settings={settings} auth={auth} route={current} products={products} onNavigate={setRoute} />
       <div className="main">
         <div className="toolbar">
           <div className="ttl"><b>{meta.title}</b><span>{meta.subtitle}</span></div>
@@ -63,12 +77,35 @@ export function App() {
               first={firstRun}
               onSettings={setSettings}
               onSignedOut={() => { setAuth({ status: 'signed-out' }); setRoute(DEFAULT_ROUTE); }}
-              onFinish={() => setRoute({ view: 'browse', role: 'artifacts' })}
+              onFinish={() => setRoute(DEFAULT_ROUTE)}
+            />
+          )}
+          {current.view === 'products' && (
+            <ProductsPage
+              products={products}
+              onNew={() => setCreating(true)}
+              onOpen={(id) => setRoute({ view: 'product', id })}
+              onImported={(id) => { refreshProducts(); setRoute({ view: 'product', id }); }}
+            />
+          )}
+          {current.view === 'product' && (
+            <ProductHome
+              key={current.id}
+              id={current.id}
+              settings={settings}
+              onChanged={refreshProducts}
+              onDeleted={() => { refreshProducts(); setRoute(DEFAULT_ROUTE); }}
             />
           )}
           {current.view === 'browse' && <RepoBrowser role={current.role} settings={settings} />}
         </div>
       </div>
+      {creating && (
+        <ProductForm
+          onClose={() => setCreating(false)}
+          onSaved={(p) => { setCreating(false); refreshProducts(); setRoute({ view: 'product', id: p.id }); }}
+        />
+      )}
     </div>
   );
 }

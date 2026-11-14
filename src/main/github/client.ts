@@ -1,6 +1,7 @@
 import { Octokit } from '@octokit/rest';
 import { apiBaseUrl } from './host.js';
 import { createGuardedFetch } from './allowlist.js';
+import type { PullDetail, PullSummary } from '../../shared/products.js';
 
 export interface RepoRef {
   owner: string;
@@ -44,7 +45,22 @@ export interface GitHubClient {
   listTree(repo: RepoRef, path: string): Promise<TreeEntry[]>;
   /** One file's decoded text content. Files over 1 MB come back truncated rather than failing. */
   getFile(repo: RepoRef, path: string): Promise<FileContent>;
+  /** A path's current blob SHA on the default branch, or null when nothing is there (404). */
+  statPath(repo: RepoRef, path: string): Promise<{ sha: string; type: 'file' | 'dir' } | null>;
+  /** The path of a file with this blob SHA anywhere on the default branch, or null. One call per repo. */
+  findBlob(repo: RepoRef, sha: string): Promise<string | null>;
+  /** Pull requests, most recently updated first, open and closed, capped at 100. */
+  listPulls(repo: RepoRef): Promise<PullSummary[]>;
+  /** One pull request, or null when it doesn't exist (404). */
+  getPull(repo: RepoRef, number: number): Promise<PullDetail | null>;
 }
+
+const isNotFound = (e: unknown) => typeof e === 'object' && e !== null && (e as { status?: number }).status === 404;
+
+type RestPull = { number: number; title: string; state: string; merged_at: string | null; draft?: boolean; user: { login: string } | null; updated_at: string };
+const toPullSummary = (p: RestPull): PullSummary => ({
+  number: p.number, title: p.title, state: p.state === 'open' ? 'open' : 'closed', merged: !!p.merged_at, draft: !!p.draft, author: p.user?.login ?? '', updatedAt: p.updated_at,
+});
 
 const MAX_FILE_BYTES = 1_000_000;
 const MAX_REPOS = 1000;
@@ -109,6 +125,43 @@ export function createGitHubClient(host: string, token: string, fetchImpl: typeo
       const bytes = Buffer.from(data.content, 'base64');
       const truncated = bytes.byteLength > MAX_FILE_BYTES;
       return { path, content: bytes.subarray(0, MAX_FILE_BYTES).toString('utf8'), truncated, htmlUrl: data.html_url ?? '', sha: data.sha };
+    },
+
+    async statPath(repo, path) {
+      try {
+        const { data } = await octokit.request('GET /repos/{owner}/{repo}/contents/{path}', {
+          owner: repo.owner, repo: repo.name, path: path.replace(/^\/+/, ''), ref: repo.defaultBranch,
+        });
+        if (Array.isArray(data)) return { sha: '', type: 'dir' };
+        return data.type === 'file' ? { sha: data.sha, type: 'file' } : null;
+      } catch (e) {
+        if (isNotFound(e)) return null;
+        throw e;
+      }
+    },
+
+    async findBlob(repo, sha) {
+      const { data } = await octokit.request('GET /repos/{owner}/{repo}/git/trees/{tree_sha}', {
+        owner: repo.owner, repo: repo.name, tree_sha: repo.defaultBranch, recursive: '1',
+      });
+      return data.tree.find((e) => e.type === 'blob' && e.sha === sha)?.path ?? null;
+    },
+
+    async listPulls(repo) {
+      const { data } = await octokit.request('GET /repos/{owner}/{repo}/pulls', {
+        owner: repo.owner, repo: repo.name, state: 'all', sort: 'updated', direction: 'desc', per_page: 100,
+      });
+      return data.map((p) => toPullSummary(p as RestPull));
+    },
+
+    async getPull(repo, number) {
+      try {
+        const { data } = await octokit.request('GET /repos/{owner}/{repo}/pulls/{pull_number}', { owner: repo.owner, repo: repo.name, pull_number: number });
+        return { ...toPullSummary(data as RestPull), body: data.body ?? '', htmlUrl: data.html_url, baseRef: data.base.ref, headRef: data.head.ref };
+      } catch (e) {
+        if (isNotFound(e)) return null;
+        throw e;
+      }
     },
   };
 }

@@ -5,6 +5,8 @@ import type { GitHubClient } from '../src/main/github/client.js';
 import { SecureStorageUnavailable, TokenStore, type SecretBox } from '../src/main/app/secrets.js';
 import { AppService, type ServiceDeps } from '../src/main/app/service.js';
 import { createSettingsStore } from '../src/main/app/settings.js';
+import { openDatabase } from '../src/main/products/db.js';
+import { ProductStore } from '../src/main/products/store.js';
 import { tmp } from './helpers.js';
 
 const repo = (name: string): RepoRef => ({ owner: 'gonzalovazquez', name, fullName: `gonzalovazquez/${name}`, defaultBranch: 'main', private: true, htmlUrl: `https://github.com/gonzalovazquez/${name}` });
@@ -32,6 +34,8 @@ function setup(env: Record<string, string | undefined> = {}): Setup {
     settings: createSettingsStore(join(dir, 'settings.json')),
     tokens: new TokenStore(join(dir, 'token.bin'), fakeBox(), env),
     createClient,
+    products: new ProductStore(openDatabase(':memory:')),
+    files: { saveText: async () => null, openText: async () => null },
   };
   return { deps, clients, createClient };
 }

@@ -1,4 +1,5 @@
 import { REPO_ROLES, ROLE_LABEL, type AuthState, type PublicSettings } from '../../../shared/ipc.js';
+import type { ProductSummary } from '../../../shared/products.js';
 import { sameRoute, type Route } from '../route.js';
 import { Icon, type IconName } from './Icon.js';
 
@@ -6,20 +7,29 @@ interface Props {
   settings: PublicSettings;
   auth: AuthState;
   route: Route;
+  products: ProductSummary[];
   onNavigate: (r: Route) => void;
 }
 
-export function Sidebar({ settings, auth, route, onNavigate }: Props) {
-  const Item = ({ to, icon, label }: { to: Route; icon: IconName; label: string }) => (
+export function Sidebar({ settings, auth, route, products, onNavigate }: Props) {
+  const Item = ({ to, icon, label, count, warn }: { to: Route; icon: IconName; label: string; count?: number; warn?: boolean }) => (
     <button className="item" aria-current={sameRoute(route, to) ? 'page' : undefined} onClick={() => onNavigate(to)}>
       <Icon name={icon} />
       <span className="t">{label}</span>
+      {count !== undefined && <span className="c" style={warn ? { color: 'var(--red)' } : undefined}>{count}</span>}
     </button>
   );
 
   return (
     <aside className="side" aria-label="Sidebar">
       <div className="side-drag" />
+      <nav className="sec" aria-label="Products">
+        <h6>Products</h6>
+        <Item to={{ view: 'products' }} icon="tray" label="All products" count={products.length} />
+        {products.map((p) => (
+          <Item key={p.id} to={{ view: 'product', id: p.id }} icon="flag" label={p.name} count={p.brokenCount || undefined} warn />
+        ))}
+      </nav>
       <nav className="sec" aria-label="Repos">
         <h6>Repos</h6>
         {REPO_ROLES.map((role) => (
