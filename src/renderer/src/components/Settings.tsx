@@ -3,7 +3,7 @@ import { DEFAULT_METRIC_SETTINGS, type MetricSettings } from '../../../shared/me
 import { ARTIFACT_TYPE_LABEL, ARTIFACT_TYPES, STAGE_LABEL, STAGES, type ArtifactType } from '../../../shared/products.js';
 import { APPEARANCES, ROLE_LABEL, REPO_ROLES, type Appearance, type AuthState, type PublicSettings, type RepoRef, type RepoRole } from '../../../shared/ipc.js';
 
-const APPEARANCE_LABEL: Record<Appearance, string> = { system: 'Match system', light: 'Light', dark: 'Dark', matrix: 'Matrix' };
+const APPEARANCE_LABEL: Record<Appearance, string> = { system: 'Match system', light: 'Light', dark: 'Dark', matrix: 'Matrix', pink: 'Bright pink' };
 
 type SignedIn = Extract<AuthState, { status: 'signed-in' }>;
 

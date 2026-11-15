@@ -50,6 +50,22 @@
 :root[data-theme="matrix"] .btn.primary { color: #00140a; font-weight: 600; }
 :root[data-theme="matrix"] ::selection { background: rgba(0, 255, 65, 0.35); color: #000; }
 
+/* Bright pink: hot pink on blush, on native light mode. Chart colours validated against the #fff7fb card
+ * (docs/chart-colors.md): magenta / blue / amber series, a five-step pink stage ramp, orange for past review point. */
+:root[data-theme="pink"] {
+  --win: #fff0f7; --side: rgba(255, 214, 234, 0.82); --bg: #ffe6f2; --card: #fff7fb;
+  --label: #3b0a24; --label2: rgba(92, 18, 58, 0.72); --label3: rgba(92, 18, 58, 0.4);
+  --sep: rgba(214, 36, 110, 0.2); --fill: rgba(214, 36, 110, 0.08); --fill2: rgba(214, 36, 110, 0.15);
+  --btn: #ffffff; --zebra: rgba(214, 36, 110, 0.04); --hover: rgba(255, 20, 147, 0.08); --select: rgba(255, 20, 147, 0.16);
+  --blue: #e0157a; --green: #1f9d55; --orange: #e8590c; --red: #d61f3c; --purple: #9b30d9; --teal: #0f8f9e; --gray: #9a7a8a; --indigo: #6d4ae0; --yellow: #b58500;
+  --series-1: #c8237a; --series-2: #2563eb; --series-3: #b06a00; --series-other: #9a7a8a;
+  --stage-0: #f08bbd; --stage-1: #e35b9d; --stage-2: #cc2f7e; --stage-3: #9c1659; --stage-4: #6b0b3c; --status-serious: #e8590c;
+  --shadow: 0 0 0 0.5px rgba(214, 36, 110, 0.22), 0 2px 8px rgba(255, 20, 147, 0.08);
+  accent-color: #e0157a;
+  color-scheme: light;
+}
+:root[data-theme="pink"] ::selection { background: rgba(255, 20, 147, 0.25); }
+
 * { box-sizing: border-box; }
 html, body, #root { height: 100%; }
 body { margin: 0; background: var(--win); color: var(--label); font: 13px/1.4 var(--font); -webkit-font-smoothing: antialiased; }

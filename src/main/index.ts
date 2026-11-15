@@ -2,7 +2,7 @@ import { app, BrowserWindow, dialog, ipcMain, nativeTheme, safeStorage, session,
 import { readFile, stat, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { CHANNELS, THEME_BASE } from '../shared/ipc.js';
+import { CHANNELS, THEME_BASE, type Appearance } from '../shared/ipc.js';
 import { registerIpc } from './app/ipc.js';
 import { TokenStore } from './app/secrets.js';
 import { AppService } from './app/service.js';
@@ -15,6 +15,8 @@ import { HttpCache } from './products/httpcache.js';
 import { ProductStore } from './products/store.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
+/** The current appearance, so a new window opens with the right background before the page paints. */
+let appearance: Appearance = 'system';
 const devUrl = process.env.ELECTRON_RENDERER_URL;
 
 // A separate data folder keeps tests and experiments away from the real settings and token.
@@ -45,7 +47,7 @@ function createService(): AppService {
     createClient: (host, token, guard) => createGitHubClient(host, token, fetch, guard),
     openExternal: (url) => shell.openExternal(url),
     // 'system' follows macOS; 'light' / 'dark' override it for the window, its styles and its title bar.
-    applyAppearance: (a) => { nativeTheme.themeSource = THEME_BASE[a] ?? (a as 'system' | 'light' | 'dark'); },
+    applyAppearance: (a) => { appearance = a; nativeTheme.themeSource = THEME_BASE[a] ?? (a as 'system' | 'light' | 'dark'); },
     // The product mapping: local only, next to settings in the app's data folder.
     products: new ProductStore(db),
     cache: new HttpCache(db),
@@ -105,7 +107,7 @@ function installNetworkGuard(getAllowedHostname: () => string | undefined): void
 function createWindow(): BrowserWindow {
   const win = new BrowserWindow({
     width: 1280, height: 840, minWidth: 900, minHeight: 600,
-    backgroundColor: nativeTheme.shouldUseDarkColors ? '#1e1e20' : '#ffffff',
+    backgroundColor: appearance === 'matrix' ? '#000000' : appearance === 'pink' ? '#fff0f7' : nativeTheme.shouldUseDarkColors ? '#1e1e20' : '#ffffff',
     ...(process.platform === 'darwin' ? { titleBarStyle: 'hiddenInset' as const, trafficLightPosition: { x: 16, y: 17 }, vibrancy: 'sidebar' as const, visualEffectState: 'followWindow' as const } : {}),
     webPreferences: {
       preload: join(here, '../preload/index.cjs'), contextIsolation: true, nodeIntegration: false, nodeIntegrationInWorker: false, sandbox: true,
