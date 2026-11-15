@@ -55,7 +55,7 @@ export function validatePatch(patch: SettingsPatch & { host?: string; login?: st
       if (repo !== null && !isRepoRef(repo)) return `The repo for "${role}" is missing required fields.`;
     }
   }
-  if (patch.appearance !== undefined && !APPEARANCES.includes(patch.appearance)) return 'Appearance must be system, light or dark.';
+  if (patch.appearance !== undefined && !APPEARANCES.includes(patch.appearance)) return `Appearance must be one of: ${APPEARANCES.join(', ')}.`;
   if (patch.onboarded !== undefined && typeof patch.onboarded !== 'boolean') return 'The onboarded setting must be true or false.';
   if (patch.branchConventions !== undefined && !isConventions(patch.branchConventions)) return 'A branch convention needs a prefix like spec/ and a base branch name.';
   if (patch.templates !== undefined && !isTemplates(patch.templates)) return 'A template must be a file path inside the artifacts repo.';

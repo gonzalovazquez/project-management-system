@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { AuthState, PublicSettings } from '../../shared/ipc.js';
 import type { ProductSummary } from '../../shared/products.js';
-import { REPO_ROLES, ROLE_LABEL } from '../../shared/ipc.js';
+import { REPO_ROLES, ROLE_LABEL, THEME_BASE } from '../../shared/ipc.js';
 import { ProductForm } from './components/ProductForm.js';
 import { ProductHome } from './components/ProductHome.js';
 import { ProductsPage } from './components/ProductsPage.js';
@@ -30,6 +30,12 @@ export function App() {
   }, []);
 
   useEffect(() => { refresh(); }, [refresh]);
+
+  // Colour themes swap the CSS tokens on top of the native light/dark base the main process sets.
+  const theme = settings && THEME_BASE[settings.appearance] ? settings.appearance : undefined;
+  useEffect(() => {
+    if (theme) document.documentElement.dataset.theme = theme; else delete document.documentElement.dataset.theme;
+  }, [theme]);
 
   // The main process signs out on its own if GitHub stops accepting the token; notice promptly.
   useEffect(() => {

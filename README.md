@@ -46,6 +46,10 @@ npm install
 npm run package        # release/PM Workbench-<version>-universal.dmg and .zip (Apple silicon + Intel)
 ```
 
+Settings → Appearance offers Match system, Light, Dark, and two colour themes: **Matrix** (phosphor
+green on black, monospace) and **Bright pink**. Each theme's chart colours are validated against
+its own background (`docs/chart-colors.md`).
+
 Open the `.dmg` and drag **PM Workbench** to Applications. A build made with Developer ID
 credentials is signed and notarized, and opens normally. Without them the build is unsigned, so
 right-click the app and choose **Open** the first time, or run
